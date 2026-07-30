@@ -1,88 +1,462 @@
-from fastapi import FastAPI, APIRouter
-from dotenv import load_dotenv
+import os
+import json
+import uuid
+import random
+import logging
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import List, Optional
+
+import bcrypt
+import jwt
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-import os
-import logging
-from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List
-import uuid
-from datetime import datetime, timezone
+from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from dotenv import load_dotenv
 
+from quiz_data import CATEGORIES, QUESTIONS
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+load_dotenv(ROOT_DIR / ".env")
 
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+MONGO_URL = os.environ["MONGO_URL"]
+DB_NAME = os.environ["DB_NAME"]
+JWT_SECRET = os.environ["JWT_SECRET"]
+EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
+JWT_ALG = "HS256"
+JWT_EXP_MINUTES = 60 * 24 * 7  # 7 days
 
-# Create the main app without a prefix
-app = FastAPI()
+client = AsyncIOMotorClient(MONGO_URL)
+db = client[DB_NAME]
 
-# Create a router with the /api prefix
-api_router = APIRouter(prefix="/api")
+app = FastAPI(title="EliteQuizGame API")
+api = APIRouter(prefix="/api")
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("elitequiz")
 
 
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
-    
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+# =========================
+# Models
+# =========================
+class RegisterIn(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=6)
+    username: str = Field(min_length=2, max_length=24)
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
 
-# Add your routes to the router instead of directly to app
-@api_router.get("/")
+class LoginIn(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    email: EmailStr
+    username: str
+    xp: int = 0
+    level: int = 1
+    games_played: int = 0
+    total_score: int = 0
+    best_streak: int = 0
+    created_at: str
+
+
+class AuthOut(BaseModel):
+    token: str
+    user: UserOut
+
+
+class Question(BaseModel):
+    id: str
+    question: str
+    options: List[str]
+    # note: correct answer NOT returned to client on quiz-start
+
+
+class QuizStartOut(BaseModel):
+    quiz_id: str
+    category_id: str
+    category_name: str
+    questions: List[Question]
+
+
+class SubmitIn(BaseModel):
+    quiz_id: str
+    answers: List[int]  # index chosen per question (-1 = skipped)
+    time_taken_ms: int = 0
+
+
+class SubmitOut(BaseModel):
+    score: int
+    correct: int
+    total: int
+    accuracy: float
+    xp_earned: int
+    new_level: int
+    best_streak: int
+    corrections: List[dict]  # per-question: {question, chosen, correct, is_correct, explanation}
+
+
+class AIQuizIn(BaseModel):
+    topic: str = Field(min_length=2, max_length=80)
+    count: int = Field(default=10, ge=5, le=15)
+
+
+class LeaderRow(BaseModel):
+    username: str
+    score: int
+    category: str
+    accuracy: float
+    created_at: str
+
+
+# =========================
+# Utilities
+# =========================
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(password: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception:
+        return False
+
+
+def make_token(user_id: str) -> str:
+    payload = {
+        "sub": user_id,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=JWT_EXP_MINUTES),
+        "iat": datetime.now(timezone.utc),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+
+
+async def get_current_user(authorization: Optional[str] = Header(default=None)):
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing token")
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
+
+def level_from_xp(xp: int) -> int:
+    # Level up every 500 xp
+    return max(1, xp // 500 + 1)
+
+
+# =========================
+# Auth routes
+# =========================
+@api.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"service": "EliteQuizGame", "status": "ok"}
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
 
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
-    
-    return status_checks
+@api.post("/auth/register", response_model=AuthOut)
+async def register(data: RegisterIn):
+    email = data.email.lower()
+    existing = await db.users.find_one({"email": email})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    user_id = str(uuid.uuid4())
+    doc = {
+        "id": user_id,
+        "email": email,
+        "username": data.username,
+        "password_hash": hash_password(data.password),
+        "xp": 0,
+        "level": 1,
+        "games_played": 0,
+        "total_score": 0,
+        "best_streak": 0,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.users.insert_one(doc)
+    token = make_token(user_id)
+    doc.pop("_id", None)
+    doc.pop("password_hash", None)
+    return {"token": token, "user": doc}
 
-# Include the router in the main app
-app.include_router(api_router)
+
+@api.post("/auth/login", response_model=AuthOut)
+async def login(data: LoginIn):
+    email = data.email.lower()
+    user = await db.users.find_one({"email": email})
+    dummy = "$2b$12$C6UzMDM.H6dfI/f/IKcEeO4jMhFqzr2WGxvZ8XmvjF8w4LvNSSf62"
+    stored = user["password_hash"] if user else dummy
+    ok = verify_password(data.password, stored)
+    if not user or not ok:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    token = make_token(user["id"])
+    user.pop("_id", None)
+    user.pop("password_hash", None)
+    return {"token": token, "user": user}
+
+
+@api.get("/auth/me", response_model=UserOut)
+async def me(user=Depends(get_current_user)):
+    return user
+
+
+# =========================
+# Categories & Quiz
+# =========================
+@api.get("/categories")
+async def get_categories():
+    return {"categories": CATEGORIES}
+
+
+@api.post("/quiz/start/{category_id}", response_model=QuizStartOut)
+async def start_quiz(category_id: str):
+    if category_id not in QUESTIONS:
+        raise HTTPException(status_code=404, detail="Category not found")
+    cat = next((c for c in CATEGORIES if c["id"] == category_id), None)
+    pool = QUESTIONS[category_id][:]
+    random.shuffle(pool)
+    selected = pool[:10]
+
+    quiz_id = str(uuid.uuid4())
+    stored_qs = []
+    client_qs = []
+    for q in selected:
+        qid = str(uuid.uuid4())
+        stored_qs.append({
+            "id": qid, "question": q["q"], "options": q["opts"], "answer_index": q["a"],
+            "explanation": q.get("exp", "")
+        })
+        client_qs.append({"id": qid, "question": q["q"], "options": q["opts"]})
+
+    await db.quizzes.insert_one({
+        "id": quiz_id,
+        "category_id": category_id,
+        "category_name": cat["name"],
+        "questions": stored_qs,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {
+        "quiz_id": quiz_id,
+        "category_id": category_id,
+        "category_name": cat["name"],
+        "questions": client_qs,
+    }
+
+
+@api.post("/quiz/ai/start", response_model=QuizStartOut)
+async def start_ai_quiz(data: AIQuizIn):
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+
+    session_id = str(uuid.uuid4())
+    system_msg = (
+        "You are a quiz question generator. Return ONLY valid JSON — no markdown, "
+        "no code fences, no extra text. The JSON must be an object with a 'questions' "
+        "array; each item has 'q' (string), 'opts' (array of exactly 4 short strings), "
+        "and 'a' (integer 0-3 index of the correct option)."
+    )
+    chat = LlmChat(
+        api_key=EMERGENT_LLM_KEY,
+        session_id=session_id,
+        system_message=system_msg,
+    ).with_model("gemini", "gemini-2.5-flash")
+
+    user_prompt = (
+        f"Generate exactly {data.count} challenging multiple-choice trivia questions on the topic: "
+        f"'{data.topic}'. Difficulty: mixed. Keep options concise (<= 6 words). "
+        f'Return JSON in this exact shape: {{"questions": [{{"q": "...", "opts": ["a","b","c","d"], "a": 0}}]}}'
+    )
+    try:
+        raw = await chat.send_message(UserMessage(text=user_prompt))
+    except Exception as e:
+        logger.exception("AI quiz generation failed")
+        raise HTTPException(status_code=502, detail=f"AI generation failed: {e}")
+
+    text = raw.strip()
+    # Strip common code fences if any
+    if text.startswith("```"):
+        text = text.strip("`")
+        # remove optional leading 'json'
+        if text.lower().startswith("json"):
+            text = text[4:]
+    # Extract JSON object substring safely
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1:
+        raise HTTPException(status_code=502, detail="AI returned invalid response")
+    try:
+        parsed = json.loads(text[start:end + 1])
+        items = parsed.get("questions", [])
+        if not items:
+            raise ValueError("empty questions")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI JSON parse error: {e}")
+
+    quiz_id = str(uuid.uuid4())
+    stored_qs, client_qs = [], []
+    for it in items[:data.count]:
+        try:
+            q_text = str(it["q"])
+            opts = [str(o) for o in it["opts"]]
+            a = int(it["a"])
+            if len(opts) != 4 or not (0 <= a <= 3):
+                continue
+        except Exception:
+            continue
+        qid = str(uuid.uuid4())
+        stored_qs.append({"id": qid, "question": q_text, "options": opts, "answer_index": a, "explanation": ""})
+        client_qs.append({"id": qid, "question": q_text, "options": opts})
+
+    if len(stored_qs) < 3:
+        raise HTTPException(status_code=502, detail="AI returned too few valid questions, try another topic")
+
+    cat_name = f"AI: {data.topic[:40]}"
+    await db.quizzes.insert_one({
+        "id": quiz_id,
+        "category_id": "ai",
+        "category_name": cat_name,
+        "questions": stored_qs,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"quiz_id": quiz_id, "category_id": "ai", "category_name": cat_name, "questions": client_qs}
+
+
+@api.post("/quiz/submit", response_model=SubmitOut)
+async def submit_quiz(
+    data: SubmitIn,
+    authorization: Optional[str] = Header(default=None),
+):
+    quiz = await db.quizzes.find_one({"id": data.quiz_id}, {"_id": 0})
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+
+    qs = quiz["questions"]
+    total = len(qs)
+    correct = 0
+    streak = 0
+    best_streak = 0
+    corrections = []
+    for i, q in enumerate(qs):
+        chosen = data.answers[i] if i < len(data.answers) else -1
+        is_correct = chosen == q["answer_index"]
+        if is_correct:
+            correct += 1
+            streak += 1
+            best_streak = max(best_streak, streak)
+        else:
+            streak = 0
+        corrections.append({
+            "question": q["question"],
+            "options": q["options"],
+            "chosen": chosen,
+            "correct": q["answer_index"],
+            "is_correct": is_correct,
+        })
+
+    # Scoring: 100 base per correct + streak bonus, time bonus
+    score = correct * 100 + best_streak * 25
+    time_bonus = max(0, 300 - (data.time_taken_ms // 1000)) if data.time_taken_ms else 0
+    score += time_bonus
+    accuracy = round((correct / total) * 100, 1) if total else 0
+
+    # Determine user (optional)
+    user = None
+    user_id = None
+    username = "Guest"
+    if authorization and authorization.lower().startswith("bearer "):
+        try:
+            token = authorization.split(" ", 1)[1]
+            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+            user = await db.users.find_one({"id": payload["sub"]})
+            if user:
+                user_id = user["id"]
+                username = user["username"]
+        except Exception:
+            pass
+
+    xp_earned = correct * 20 + best_streak * 10
+    new_level = 1
+    new_best_streak = best_streak
+
+    if user:
+        new_xp = user.get("xp", 0) + xp_earned
+        new_level = level_from_xp(new_xp)
+        new_best_streak = max(user.get("best_streak", 0), best_streak)
+        await db.users.update_one(
+            {"id": user_id},
+            {"$set": {
+                "xp": new_xp,
+                "level": new_level,
+                "best_streak": new_best_streak,
+            },
+             "$inc": {
+                "games_played": 1,
+                "total_score": score,
+             }}
+        )
+
+    # Save leaderboard entry (guests too, but attributed 'Guest')
+    await db.scores.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "username": username,
+        "category_id": quiz["category_id"],
+        "category_name": quiz["category_name"],
+        "score": score,
+        "correct": correct,
+        "total": total,
+        "accuracy": accuracy,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+    return {
+        "score": score,
+        "correct": correct,
+        "total": total,
+        "accuracy": accuracy,
+        "xp_earned": xp_earned,
+        "new_level": new_level,
+        "best_streak": new_best_streak,
+        "corrections": corrections,
+    }
+
+
+@api.get("/leaderboard")
+async def leaderboard(category: Optional[str] = None, limit: int = 20):
+    q = {}
+    if category and category != "all":
+        q["category_id"] = category
+    rows = await db.scores.find(q, {"_id": 0}).sort("score", -1).limit(limit).to_list(limit)
+    return {"rows": rows}
+
+
+@api.get("/me/history")
+async def my_history(user=Depends(get_current_user), limit: int = 20):
+    rows = await db.scores.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
+    return {"rows": rows}
+
+
+# =========================
+# App wiring
+# =========================
+app.include_router(api)
 
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

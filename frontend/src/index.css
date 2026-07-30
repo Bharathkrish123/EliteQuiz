@@ -1,115 +1,110 @@
+@import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@300;400;600;700;800;900&family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  :root {
+    --background: 240 6% 3%;
+    --foreground: 0 0% 100%;
+    --card: 240 6% 6%;
+    --card-foreground: 0 0% 100%;
+    --popover: 240 6% 6%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 66 100% 50%;
+    --primary-foreground: 0 0% 0%;
+    --secondary: 240 6% 10%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 240 6% 10%;
+    --muted-foreground: 240 5% 65%;
+    --accent: 240 6% 10%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 340 100% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 240 4% 16%;
+    --input: 240 4% 16%;
+    --ring: 66 100% 50%;
+    --radius: 0.5rem;
+  }
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+html, body, #root {
+  background: #050505;
+  color: #ffffff;
+  font-family: 'Outfit', system-ui, sans-serif;
+  min-height: 100%;
+}
+
 body {
-    margin: 0;
-    font-family:
-        -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen",
-        "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
-        sans-serif;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #050505;
+  background-image:
+    radial-gradient(circle at 15% 10%, rgba(228,255,0,0.06), transparent 40%),
+    radial-gradient(circle at 85% 85%, rgba(0,240,255,0.05), transparent 45%);
+  background-attachment: fixed;
 }
 
-code {
-    font-family:
-        source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
+/* Grain overlay */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.06;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
 }
 
-@layer base {
-    :root {
-        --background: 0 0% 100%;
-        --foreground: 0 0% 3.9%;
-        --card: 0 0% 100%;
-        --card-foreground: 0 0% 3.9%;
-        --popover: 0 0% 100%;
-        --popover-foreground: 0 0% 3.9%;
-        --primary: 0 0% 9%;
-        --primary-foreground: 0 0% 98%;
-        --secondary: 0 0% 96.1%;
-        --secondary-foreground: 0 0% 9%;
-        --muted: 0 0% 96.1%;
-        --muted-foreground: 0 0% 45.1%;
-        --accent: 0 0% 96.1%;
-        --accent-foreground: 0 0% 9%;
-        --destructive: 0 84.2% 60.2%;
-        --destructive-foreground: 0 0% 98%;
-        --border: 0 0% 89.8%;
-        --input: 0 0% 89.8%;
-        --ring: 0 0% 3.9%;
-        --chart-1: 12 76% 61%;
-        --chart-2: 173 58% 39%;
-        --chart-3: 197 37% 24%;
-        --chart-4: 43 74% 66%;
-        --chart-5: 27 87% 67%;
-        --radius: 0.5rem;
-    }
-    .dark {
-        --background: 0 0% 3.9%;
-        --foreground: 0 0% 98%;
-        --card: 0 0% 3.9%;
-        --card-foreground: 0 0% 98%;
-        --popover: 0 0% 3.9%;
-        --popover-foreground: 0 0% 98%;
-        --primary: 0 0% 98%;
-        --primary-foreground: 0 0% 9%;
-        --secondary: 0 0% 14.9%;
-        --secondary-foreground: 0 0% 98%;
-        --muted: 0 0% 14.9%;
-        --muted-foreground: 0 0% 63.9%;
-        --accent: 0 0% 14.9%;
-        --accent-foreground: 0 0% 98%;
-        --destructive: 0 62.8% 30.6%;
-        --destructive-foreground: 0 0% 98%;
-        --border: 0 0% 14.9%;
-        --input: 0 0% 14.9%;
-        --ring: 0 0% 83.1%;
-        --chart-1: 220 70% 50%;
-        --chart-2: 160 60% 45%;
-        --chart-3: 30 80% 55%;
-        --chart-4: 280 65% 60%;
-        --chart-5: 340 75% 55%;
-    }
+#root { position: relative; z-index: 2; }
+
+.font-display { font-family: 'Unbounded', system-ui, sans-serif; }
+.font-mono { font-family: 'JetBrains Mono', monospace; }
+
+::selection { background: #E4FF00; color: #000; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #0F0F11; }
+::-webkit-scrollbar-thumb { background: #27272A; border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: #3F3F46; }
+
+/* Small utilities */
+.grid-lines {
+  background-image:
+    linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
 }
 
-@layer base {
-    * {
-        @apply border-border;
-    }
-    body {
-        @apply bg-background text-foreground;
-    }
-}
+.neon-yellow-glow { box-shadow: 0 0 40px rgba(228,255,0,0.25); }
+.neon-cyan-glow { box-shadow: 0 0 40px rgba(0,240,255,0.25); }
+.neon-pink-glow { box-shadow: 0 0 40px rgba(255,0,85,0.25); }
 
-@layer base {
-    [data-debug-wrapper="true"] {
-        display: contents !important;
-    }
-
-    [data-debug-wrapper="true"] > * {
-        margin-left: inherit;
-        margin-right: inherit;
-        margin-top: inherit;
-        margin-bottom: inherit;
-        padding-left: inherit;
-        padding-right: inherit;
-        padding-top: inherit;
-        padding-bottom: inherit;
-        column-gap: inherit;
-        row-gap: inherit;
-        gap: inherit;
-        border-left-width: inherit;
-        border-right-width: inherit;
-        border-top-width: inherit;
-        border-bottom-width: inherit;
-        border-left-style: inherit;
-        border-right-style: inherit;
-        border-top-style: inherit;
-        border-bottom-style: inherit;
-        border-left-color: inherit;
-        border-right-color: inherit;
-        border-top-color: inherit;
-        border-bottom-color: inherit;
-    }
+.btn-primary {
+  background: #E4FF00;
+  color: #000;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  transition: transform 150ms ease, background-color 150ms ease, box-shadow 200ms ease;
 }
+.btn-primary:hover { background: #C8E000; transform: scale(1.02); box-shadow: 0 0 30px rgba(228,255,0,0.45); }
+.btn-primary:active { transform: scale(0.99); }
+
+.btn-ghost {
+  border: 1px solid #27272A;
+  background: transparent;
+  color: #fff;
+  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+}
+.btn-ghost:hover { border-color: #E4FF00; color: #E4FF00; }
+
+.card-surface { background: #0F0F11; border: 1px solid #27272A; }
+.card-raised { background: #1A1A1E; border: 1px solid #27272A; }
