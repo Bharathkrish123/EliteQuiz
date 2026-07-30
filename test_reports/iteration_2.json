@@ -1,0 +1,44 @@
+{
+  "summary": "Stripe integration + AI free-tier limit tested end-to-end. All 7 backend pytest tests pass (packages listing, checkout session creation with real Stripe URL + DB persistence, unknown package 400, status pending/404, AI 402 free limit, Pro user bypass). All frontend flows verified: /pricing renders with buy-pro-btn and redirects logged-out users to /auth?mode=login; /payment/cancel + /payment/success render (pay-pending-heading polls with fake session_id); nav-pricing labelled 'Pro'; toggling is_pro=true in MongoDB immediately reveals nav-pro-badge crown + profile-pro-badge + 'already-pro' state on /pricing (hides buy button); non-pro shows profile-upgrade-link; AI limit modal (ai-limit-modal + ai-limit-upgrade) opens on 402 with route interception.",
+  "tested_scope": ["backend", "frontend", "integration", "stripe", "ai-limit"],
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "passed": [
+    "GET /api/payments/packages returns elite_pro_lifetime amount=9.99 usd",
+    "POST /api/payments/checkout returns checkout_url starting with https://checkout.stripe.com/ and inserts payment_transactions {status:initiated, payment_status:pending}",
+    "POST /api/payments/checkout with unknown package_id -> 400",
+    "GET /api/payments/status/{session_id} returns pending for freshly created session (polls Stripe when non-paid)",
+    "GET /api/payments/status/{unknown} -> 404",
+    "POST /api/quiz/ai/start returns 402 with detail.code=AI_LIMIT_REACHED once daily count reaches 3 (pre-seeded via db.ai_daily to avoid burning Gemini calls)",
+    "Pro user (is_pro=true) bypasses AI daily limit — no 402 even with counter at 99",
+    "Frontend /pricing renders buy-pro-btn; logged-out click redirects to /auth?mode=login",
+    "Navbar has nav-pricing labelled 'Pro'",
+    "Frontend /payment/cancel shows pay-cancel-heading + back-pricing",
+    "Frontend /payment/success?session_id=fake shows pay-pending-heading (Confirming payment...)",
+    "AI Quiz page: 402 response triggers ai-limit-modal with ai-limit-upgrade link",
+    "Setting user.is_pro=true in DB -> after re-login, nav-pro-badge crown appears on XP chip AND profile-pro-badge shown AND profile-upgrade-link hidden AND /pricing shows already-pro (buy button hidden)",
+    "Non-pro user: profile-upgrade-link visible, profile-pro-badge & nav-pro-badge absent"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_stripe_and_limits.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is ~650 lines with 3 concerns (auth, quiz, payments) — recommend splitting into routers/auth.py, routers/quiz.py, routers/payments.py before it grows further.",
+    "In _apply_paid_side_effects (line 567), Pro upgrade only fires when txn.user_id is set. Anonymous checkouts silently orphan the payment even after success. Consider surfacing this in UI (buy-pro-btn already blocks anon in Pricing.jsx — good) or storing customer email from Stripe session for post-hoc reconciliation.",
+    "payment_status endpoint refetches txn on every non-paid poll — a small optimization: also break out early when payment_status in ('failed','expired').",
+    "Webhook (POST /api/webhook/stripe): duplicate DB update logic with payment_status endpoint — extract a shared helper _mark_paid(session_id) to keep idempotency in one place.",
+    "AI daily limiter uses (anon:true, day) for ALL guests globally — a single guest exhausting 3 blocks the world. Consider IP-based key or requiring auth for AI."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_stripe_and_limits.py (new)",
+    "/app/backend/tests/__init__.py (new)"
+  ],
+  "success_rate": {"backend": "100% (7/7 pytest)", "frontend": "100% (all data-testids verified)"},
+  "test_credentials": "e2e@test.com / pass1234 (reset to is_pro=false after tests)",
+  "seed_data_creation": "Pre-seeded db.ai_daily with count=3 for fresh TEST_ users to trigger 402 without Gemini calls; TEST_ users auto-cleaned via fixture teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend test file /app/backend/tests/test_stripe_and_limits.py is safe for regression — creates TEST_ users and cleans them up. Do NOT attempt to complete Stripe hosted checkout page (external, non-automatable). To manually toggle Pro on e2e user: db.users.updateOne({email:'e2e@test.com'},{$set:{is_pro:true}}) — currently is_pro=false."
+}

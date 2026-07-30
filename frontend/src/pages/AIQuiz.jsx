@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import Navbar from "@/components/Navbar";
 import { api } from "@/lib/api";
-import { Sparkle, ArrowRight } from "@phosphor-icons/react";
+import { Sparkle, ArrowRight, Crown, Lightning } from "@phosphor-icons/react";
 import { toast } from "sonner";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 
 const SUGGESTIONS = [
   "Ancient Egypt", "Formula 1 legends", "Marvel Cinematic Universe",
@@ -14,6 +15,7 @@ const SUGGESTIONS = [
 export default function AIQuiz() {
   const [topic, setTopic] = useState("");
   const [loading, setLoading] = useState(false);
+  const [limitModal, setLimitModal] = useState(null); // {used, limit}
   const nav = useNavigate();
 
   const go = async (t) => {
@@ -22,10 +24,14 @@ export default function AIQuiz() {
     setLoading(true);
     try {
       const r = await api.post("/quiz/ai/start", { topic: clean, count: 10 });
-      // Navigate to a generic quiz play route using AI category and preload state
       nav(`/quiz/ai`, { state: { quiz: r.data } });
     } catch (e) {
-      toast.error(e.response?.data?.detail || "AI generation failed");
+      const d = e.response?.data?.detail;
+      if (e.response?.status === 402 && typeof d === "object" && d?.code === "AI_LIMIT_REACHED") {
+        setLimitModal({ used: d.used, limit: d.limit });
+      } else {
+        toast.error((typeof d === "string" && d) || "AI generation failed");
+      }
     } finally { setLoading(false); }
   };
 
@@ -78,6 +84,26 @@ export default function AIQuiz() {
           </div>
         </div>
       </div>
+
+      <Dialog open={!!limitModal} onOpenChange={(o) => !o && setLimitModal(null)}>
+        <DialogContent data-testid="ai-limit-modal" className="bg-void-surface border-neon-yellow">
+          <DialogHeader>
+            <div className="flex items-center gap-2">
+              <Crown weight="fill" className="text-neon-yellow" size={22} />
+              <DialogTitle className="font-display uppercase tracking-tight text-2xl">Daily AI limit reached</DialogTitle>
+            </div>
+            <DialogDescription className="text-zinc-400">
+              You've used all {limitModal?.limit} free AI quizzes today. Upgrade to <span className="text-neon-yellow font-bold">Elite Pro</span> for unlimited AI quizzes — one-time $9.99, forever.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <button onClick={() => setLimitModal(null)} className="btn-ghost px-4 py-2 rounded-sm text-xs uppercase tracking-widest" data-testid="ai-limit-later">Maybe later</button>
+            <Link to="/pricing" data-testid="ai-limit-upgrade" className="btn-primary px-4 py-2 rounded-sm text-xs uppercase tracking-widest inline-flex items-center gap-2">
+              <Lightning weight="fill" size={12} /> Get Elite Pro
+            </Link>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

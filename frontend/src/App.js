@@ -11,6 +11,9 @@ import Leaderboard from "@/pages/Leaderboard";
 import Profile from "@/pages/Profile";
 import AIQuiz from "@/pages/AIQuiz";
 import Auth from "@/pages/Auth";
+import Pricing from "@/pages/Pricing";
+import PaymentSuccess from "@/pages/PaymentSuccess";
+import PaymentCancel from "@/pages/PaymentCancel";
 
 function App() {
   return (
@@ -26,6 +29,9 @@ function App() {
             <Route path="/profile" element={<Profile />} />
             <Route path="/ai-quiz" element={<AIQuiz />} />
             <Route path="/auth" element={<Auth />} />
+            <Route path="/pricing" element={<Pricing />} />
+            <Route path="/payment/success" element={<PaymentSuccess />} />
+            <Route path="/payment/cancel" element={<PaymentCancel />} />
           </Routes>
         </BrowserRouter>
         <Toaster theme="dark" position="top-center" toastOptions={{

@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
-import { Navigate } from "react-router-dom";
+import { Navigate, Link } from "react-router-dom";
 import Navbar from "@/components/Navbar";
 import { api } from "@/lib/api";
-import { Trophy, Fire, Lightning, Target } from "@phosphor-icons/react";
+import { Trophy, Fire, Lightning, Target, Crown } from "@phosphor-icons/react";
 
 export default function Profile() {
   const { user, ready } = useAuth();
@@ -32,9 +32,21 @@ export default function Profile() {
               alt="avatar" className="w-20 h-20 rounded-sm object-cover border border-void-border"
             />
             <div>
-              <div className="text-[10px] uppercase tracking-[0.3em] text-neon-yellow font-bold">Player</div>
+              <div className="text-[10px] uppercase tracking-[0.3em] text-neon-yellow font-bold flex items-center gap-2">
+                Player
+                {user.is_pro && (
+                  <span data-testid="profile-pro-badge" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-neon-yellow text-black text-[9px] font-black">
+                    <Crown weight="fill" size={10} /> PRO
+                  </span>
+                )}
+              </div>
               <div className="font-display font-black text-3xl tracking-tighter uppercase" data-testid="profile-username">{user.username}</div>
               <div className="text-xs text-zinc-400 mt-1">{user.email}</div>
+              {!user.is_pro && (
+                <Link to="/pricing" data-testid="profile-upgrade-link" className="mt-2 inline-flex items-center gap-1 text-[10px] uppercase tracking-widest text-neon-yellow hover:underline">
+                  <Crown weight="fill" size={10} /> Upgrade to Elite Pro
+                </Link>
+              )}
             </div>
             <div className="ml-auto text-right">
               <div className="text-[10px] uppercase tracking-[0.3em] text-zinc-500 font-bold">Level</div>

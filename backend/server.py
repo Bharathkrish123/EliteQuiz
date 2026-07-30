@@ -9,11 +9,15 @@ from typing import List, Optional
 
 import bcrypt
 import jwt
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, Request
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from dotenv import load_dotenv
+
+from emergentintegrations.payments.stripe.checkout import (
+    StripeCheckout, CheckoutSessionRequest,
+)
 
 from quiz_data import CATEGORIES, QUESTIONS
 
@@ -24,8 +28,20 @@ MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
+STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "sk_test_emergent")
 JWT_ALG = "HS256"
 JWT_EXP_MINUTES = 60 * 24 * 7  # 7 days
+
+# Server-defined product catalog — clients only send package_id, never amounts.
+PACKAGES = {
+    "elite_pro_lifetime": {
+        "name": "Elite Pro — Lifetime",
+        "amount": 9.99,
+        "currency": "usd",
+        "description": "One-time · unlocks unlimited AI quizzes + Pro badge forever.",
+    },
+}
+FREE_AI_QUIZZES_PER_DAY = 3
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -61,6 +77,7 @@ class UserOut(BaseModel):
     games_played: int = 0
     total_score: int = 0
     best_streak: int = 0
+    is_pro: bool = False
     created_at: str
 
 
@@ -180,6 +197,7 @@ async def register(data: RegisterIn):
         "games_played": 0,
         "total_score": 0,
         "best_streak": 0,
+        "is_pro": False,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.users.insert_one(doc)
@@ -253,7 +271,32 @@ async def start_quiz(category_id: str):
 
 
 @api.post("/quiz/ai/start", response_model=QuizStartOut)
-async def start_ai_quiz(data: AIQuizIn):
+async def start_ai_quiz(data: AIQuizIn, authorization: Optional[str] = Header(default=None)):
+    # Enforce free-tier daily limit unless the user is Pro. Guests are treated as free tier.
+    user = None
+    if authorization and authorization.lower().startswith("bearer "):
+        try:
+            token = authorization.split(" ", 1)[1]
+            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+            user = await db.users.find_one({"id": payload["sub"]})
+        except Exception:
+            user = None
+
+    is_pro = bool(user and user.get("is_pro"))
+    if not is_pro:
+        key = user["id"] if user else None
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        q = {"user_id": key, "day": today} if key else {"anon": True, "day": today}
+        rec = await db.ai_daily.find_one(q)
+        used = (rec or {}).get("count", 0)
+        if used >= FREE_AI_QUIZZES_PER_DAY:
+            raise HTTPException(status_code=402, detail={
+                "code": "AI_LIMIT_REACHED",
+                "message": f"Free tier: {FREE_AI_QUIZZES_PER_DAY} AI quizzes per day. Upgrade to Elite Pro for unlimited.",
+                "used": used,
+                "limit": FREE_AI_QUIZZES_PER_DAY,
+            })
+
     from emergentintegrations.llm.chat import LlmChat, UserMessage
 
     session_id = str(uuid.uuid4())
@@ -326,6 +369,14 @@ async def start_ai_quiz(data: AIQuizIn):
         "questions": stored_qs,
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
+
+    # Increment free-tier daily counter (only if not pro)
+    if not is_pro:
+        key = user["id"] if user else None
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        q = {"user_id": key, "day": today} if key else {"anon": True, "day": today}
+        await db.ai_daily.update_one(q, {"$inc": {"count": 1}}, upsert=True)
+
     return {"quiz_id": quiz_id, "category_id": "ai", "category_name": cat_name, "questions": client_qs}
 
 
@@ -442,6 +493,142 @@ async def leaderboard(category: Optional[str] = None, limit: int = 20):
 async def my_history(user=Depends(get_current_user), limit: int = 20):
     rows = await db.scores.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
     return {"rows": rows}
+
+
+# =========================
+# Payments (Stripe — Flow B via emergentintegrations)
+# =========================
+class CheckoutIn(BaseModel):
+    package_id: str
+    origin_url: str
+
+
+@api.get("/payments/packages")
+async def list_packages():
+    return {
+        "packages": [
+            {"id": pid, **{k: v for k, v in pkg.items() if k != "amount"}, "amount": pkg["amount"]}
+            for pid, pkg in PACKAGES.items()
+        ]
+    }
+
+
+def _stripe_checkout(request: Request) -> StripeCheckout:
+    # Build webhook URL from incoming request base_url — never hardcode
+    host_url = str(request.base_url)
+    webhook_url = f"{host_url.rstrip('/')}/api/webhook/stripe"
+    return StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+
+
+@api.post("/payments/checkout")
+async def create_checkout(data: CheckoutIn, request: Request, authorization: Optional[str] = Header(default=None)):
+    pkg = PACKAGES.get(data.package_id)
+    if not pkg:
+        raise HTTPException(status_code=400, detail="Unknown package")
+
+    # Attach user_id if authenticated (optional)
+    user_id = None
+    if authorization and authorization.lower().startswith("bearer "):
+        try:
+            payload = jwt.decode(authorization.split(" ", 1)[1], JWT_SECRET, algorithms=[JWT_ALG])
+            user_id = payload.get("sub")
+        except Exception:
+            user_id = None
+
+    origin = data.origin_url.rstrip("/")
+    success_url = f"{origin}/payment/success?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{origin}/payment/cancel"
+
+    sc = _stripe_checkout(request)
+    req = CheckoutSessionRequest(
+        amount=float(pkg["amount"]),
+        currency=pkg["currency"],
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata={"user_id": user_id or "", "package_id": data.package_id},
+    )
+    session = await sc.create_checkout_session(req)
+
+    # Persist BEFORE returning
+    await db.payment_transactions.insert_one({
+        "session_id": session.session_id,
+        "user_id": user_id,
+        "package_id": data.package_id,
+        "amount": pkg["amount"],
+        "currency": pkg["currency"],
+        "status": "initiated",
+        "payment_status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"checkout_url": session.url, "session_id": session.session_id}
+
+
+async def _apply_paid_side_effects(txn: dict):
+    """Idempotent: grant Pro to user if package is elite_pro_lifetime."""
+    if txn.get("package_id") == "elite_pro_lifetime" and txn.get("user_id"):
+        await db.users.update_one({"id": txn["user_id"]}, {"$set": {"is_pro": True}})
+
+
+@api.get("/payments/status/{session_id}")
+async def payment_status(session_id: str, request: Request):
+    txn = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    if txn.get("payment_status") != "paid":
+        try:
+            sc = _stripe_checkout(request)
+            status = await sc.get_checkout_status(session_id)
+            if status.payment_status == "paid" or status.status == "complete":
+                res = await db.payment_transactions.update_one(
+                    {"session_id": session_id, "payment_status": {"$ne": "paid"}},
+                    {"$set": {
+                        "status": "completed",
+                        "payment_status": "paid",
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }},
+                )
+                if res.modified_count:
+                    await _apply_paid_side_effects(txn)
+                txn = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+        except Exception as e:
+            logger.warning(f"status poll error: {e}")
+
+    return {
+        "session_id": txn["session_id"],
+        "status": txn["status"],
+        "payment_status": txn["payment_status"],
+    }
+
+
+@api.post("/webhook/stripe")
+async def stripe_webhook(request: Request):
+    body = await request.body()
+    sig = request.headers.get("Stripe-Signature", "") or request.headers.get("stripe-signature", "")
+    sc = _stripe_checkout(request)
+    try:
+        evt = await sc.handle_webhook(body, sig)
+    except Exception as e:
+        logger.warning(f"webhook verify error: {e}")
+        raise HTTPException(status_code=400, detail="Invalid webhook")
+
+    session_id = getattr(evt, "session_id", None)
+    payment_status_val = getattr(evt, "payment_status", None)
+    if session_id and payment_status_val == "paid":
+        res = await db.payment_transactions.update_one(
+            {"session_id": session_id, "payment_status": {"$ne": "paid"}},
+            {"$set": {
+                "status": "completed",
+                "payment_status": "paid",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }},
+        )
+        if res.modified_count:
+            txn = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+            if txn:
+                await _apply_paid_side_effects(txn)
+    return {"ok": True}
 
 
 # =========================

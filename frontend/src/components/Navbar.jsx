@@ -1,6 +1,6 @@
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { Trophy, User, SignOut, Lightning } from "@phosphor-icons/react";
+import { Trophy, User, SignOut, Lightning, Crown } from "@phosphor-icons/react";
 
 export default function Navbar() {
   const { user, logout } = useAuth();
@@ -30,6 +30,7 @@ export default function Navbar() {
           <NavLink to="/categories" className={linkClass} data-testid="nav-play">Play</NavLink>
           <NavLink to="/ai-quiz" className={linkClass} data-testid="nav-ai">AI Quiz</NavLink>
           <NavLink to="/leaderboard" className={linkClass} data-testid="nav-leaderboard">Leaderboard</NavLink>
+          <NavLink to="/pricing" className={linkClass} data-testid="nav-pricing">Pro</NavLink>
           {user && <NavLink to="/profile" className={linkClass} data-testid="nav-profile">Profile</NavLink>}
         </nav>
 
@@ -37,6 +38,7 @@ export default function Navbar() {
           {user ? (
             <>
               <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 card-raised rounded-full">
+                {user.is_pro && <Crown weight="fill" size={12} className="text-neon-yellow" data-testid="nav-pro-badge" />}
                 <Trophy weight="fill" size={14} className="text-neon-yellow" />
                 <span data-testid="nav-xp" className="font-display text-xs font-bold">{user.xp} XP</span>
                 <span className="text-xs text-zinc-500">·</span>
