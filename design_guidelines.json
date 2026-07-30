@@ -1,0 +1,164 @@
+{
+  "theme": "dark",
+  "brand_name": "EliteQuizGame",
+  "archetype": "ARCHETYPE 7: ELECTRIC & NEON (Future, Speed, Disruption)",
+  "typography": {
+    "strategy": "The 'Editorial Future' tailored for Esports. A wide, aggressive Display font for headings and numbers, paired with a highly legible Geometric Sans for UI elements and questions.",
+    "fonts": {
+      "headings": "Unbounded",
+      "body": "Outfit",
+      "mono": "JetBrains Mono"
+    },
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl font-black tracking-tighter uppercase",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight uppercase",
+      "h3": "text-xl sm:text-2xl font-bold tracking-tight",
+      "h4": "text-lg sm:text-xl font-semibold",
+      "body": "text-base leading-relaxed text-zinc-300",
+      "small_labels": "text-xs font-bold tracking-[0.2em] uppercase text-zinc-500",
+      "numbers": "font-['Unbounded'] tracking-tighter"
+    },
+    "rules": [
+      "NEVER use Inter, Roboto, or Open Sans.",
+      "Headings over 32px MUST use tracking-tighter.",
+      "Numbers in score/streak/timer MUST use Unbounded for a gaming feel."
+    ]
+  },
+  "colors": {
+    "base": {
+      "background": "#050505",
+      "surface": "#0F0F11",
+      "surface_raised": "#1A1A1E",
+      "border": "#27272A"
+    },
+    "accents": {
+      "primary": "#E4FF00",
+      "primary_hover": "#C8E000",
+      "secondary": "#FF0055",
+      "tertiary": "#00F0FF",
+      "success": "#00FF66",
+      "error": "#FF0055"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#A1A1AA",
+      "disabled": "#52525B",
+      "inverse": "#000000"
+    },
+    "rules": [
+      "Do NOT use pure #000000. Use Void Black (#050505).",
+      "Do NOT use generic Vercel gradients. Rely on sharp neon accents on dark backgrounds.",
+      "Always set text color on hover. When hovering an accent background, text must switch to inverse (black)."
+    ]
+  },
+  "visual_enhancers": {
+    "surfaces": "Grid Borders (The Technical Look) mixed with Retro-Futurism for the AI Quiz mode.",
+    "effects": [
+      "Add a subtle CSS noise/grain overlay (`bg-[url('/noise.png')] opacity-20 pointer-events-none`) over the main background to eliminate digital flatness.",
+      "Active state cards must have a 1px solid primary color border with a subtle inner glow (`shadow-[inset_0_0_15px_rgba(228,255,0,0.15)]`).",
+      "Glassmorphism ONLY for sticky headers or modals (`bg-[#0F0F11]/80 backdrop-blur-xl border-b border-white/10`)."
+    ]
+  },
+  "grids_layouts": {
+    "spacing_system": "Use generous spacing. Tailwind p-6, p-8, p-12. Containers with borders MUST have generous internal padding (p-6 or p-8) to prevent text collision.",
+    "bento_grid": "For the Dashboard/Profile, use 'The Tetris Grid'. Grid-cols-1 md:grid-cols-4 lg:grid-cols-8. Gap-6. Mix large stat cards with smaller detail blocks to create asymmetry.",
+    "category_grid": "Use grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6. Each category card should be tall (aspect-[3/4]) with an image overlay and large bold category name at the bottom."
+  },
+  "components": {
+    "buttons": "Sharp edges or extremely pill-shaped. No in-between. Primary CTA is Cyber Yellow (#E4FF00) background with Black text. Font black. Hover: scale slightly, increase brightness. Add a subtle drop-shadow glowing effect.",
+    "inputs": "Flat surfaces. bg-[#0F0F11], 1px border-[#27272A]. Focus: border-primary ring-1 ring-primary/50.",
+    "quiz_play_card": "Center aligned question, huge text. 4 massive answer buttons. Unselected: surface_raised. Hover: 1px border primary. Selected (Correct): bg-success text-black. Selected (Wrong): bg-error text-white.",
+    "timer_ring": "Use SVG circle with stroke-dasharray for the 15s timer. Color transitions from success (green) to warning (yellow) to error (red) as time runs out.",
+    "result_screen": "Requires Confetti explosion (react-confetti). Massive score text in neon yellow. 'Share' button with copy-to-clipboard functionality.",
+    "leaderboard": "Dense table layout. Rank 1, 2, 3 should have custom row backgrounds (gold/silver/bronze tints on dark bg). Sticky header for table."
+  },
+  "motion": {
+    "interactions": "Hover states must scale (`scale-[1.02]`) and shift border colors instantly, while backgrounds transition smoothly.",
+    "page_transitions": "Fade in with a slight upward translation (`translate-y-4` to `translate-y-0`).",
+    "staggered_lists": "Leaderboard items and Category cards must animate in sequentially using framer-motion staggerChildren.",
+    "accessibility": "Respect prefers-reduced-motion for all scale and translate animations."
+  },
+  "accessibility": {
+    "contrast": "Ensure pure black text over Neon Yellow/Cyan/Green backgrounds for WCAG AAA compliance.",
+    "focus": "All interactive elements must have a visible focus state: `focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-black`.",
+    "testing": "All interactive elements MUST include a `data-testid` attribute (e.g., `data-testid=\"play-now-btn\"`)."
+  },
+  "icons": {
+    "library": "@phosphor-icons/react",
+    "weight": "duotone",
+    "usage": "Use heavily in navigation, stat blocks (XP, Streak, Time), and categories. Color icons with neon accents against dark backgrounds."
+  },
+  "3d_libraries": {
+    "recommendation": "Use `react-confetti` for the result screen. Use `framer-motion` for UI elements. No heavy 3D canvas needed to keep the game fast, but utilize 3D-styled avatars (images) and heavy CSS shadows to simulate depth."
+  },
+  "image_urls": {
+    "hero_backgrounds": [
+      {
+        "url": "https://images.unsplash.com/photo-1557264322-b44d383a2906?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNDR8MHwxfHNlYXJjaHwxfHxuZW9uJTIwYWJzdHJhY3QlMjBkYXJrfGVufDB8fHx8MTc4NTM5MDczNXww&ixlib=rb-4.1.0&q=85",
+        "category": "hero",
+        "description": "Green and pink abstract art, excellent for AI Quiz hero or general abstract background with an overlay."
+      },
+      {
+        "url": "https://images.pexels.com/photos/13800328/pexels-photo-13800328.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "category": "leaderboard_header",
+        "description": "Abstract long exposure of orange and blue light streaks, gives a feeling of speed and data."
+      }
+    ],
+    "avatars": [
+      {
+        "url": "https://images.unsplash.com/photo-1740252117013-4fb21771e7ca?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzZ8MHwxfHNlYXJjaHw0fHxnYW1lciUyMHByb2ZpbGUlMjBhdmF0YXJ8ZW58MHx8fHwxNzg1MzkwNzQ3fDA&ixlib=rb-4.1.0&q=85",
+        "category": "user_avatar",
+        "description": "3D cartoon character with a blue hat, use as default guest/player avatar."
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1740252117027-4275d3f84385?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzZ8MHwxfHNlYXJjaHwyfHxnYW1lciUyMHByb2ZpbGUlMjBhdmF0YXJ8ZW58MHx8fHwxNzg1MzkwNzQ3fDA&ixlib=rb-4.1.0&q=85",
+        "category": "user_avatar_2",
+        "description": "3D cartoon character with purple hair and sunglasses."
+      }
+    ],
+    "categories": [
+      {
+        "url": "https://images.pexels.com/photos/33911793/pexels-photo-33911793.jpeg",
+        "category": "sports",
+        "description": "Stadium at night."
+      },
+      {
+        "url": "https://images.pexels.com/photos/7915213/pexels-photo-7915213.jpeg",
+        "category": "tech_or_gaming",
+        "description": "Neon gaming arcade setup."
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1534515538060-80212d73acb6?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzV8MHwxfHNlYXJjaHwzfHxuZW9uJTIwM2QlMjByZW5kZXJ8ZW58MHx8fHwxNzgyNzI3NjA3fDA&ixlib=rb-4.1.0&q=85",
+        "category": "music_or_abstract",
+        "description": "Assorted-color neon lights."
+      }
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Install `@phosphor-icons/react` using yarn.",
+    "Install `react-confetti` and `react-use` (for window size) using yarn for the results screen.",
+    "Install `framer-motion` for animations.",
+    "Configure Tailwind with the extended color palette (Electric & Neon) provided in this JSON.",
+    "Import 'Unbounded' and 'Outfit' fonts via Google Fonts in index.css.",
+    "Set the root background color to `#050505` and text to `#FFFFFF`.",
+    "Add a CSS grain texture over the main app wrapper: `pointer-events: none; background-image: url('data:image/svg+xml,...'); opacity: 0.05`.",
+    "Ensure the timer logic handles the 15-second countdown with a visual indicator (progress bar or SVG ring).",
+    "Use standard `.js` / `.jsx` extension since TypeScript is not enforced, but write clean React 18+ code.",
+    "Create the app following mobile-first layout principles, but ensure the Desktop esports UI is dense and heavily styled."
+  ],
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. In frontend design, this creates what users call the 'AI slop' aesthetic. Avoid this: make creative, distinctive frontends that surprise and delight.",
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through layered design elements with z-index hierarchy and neon drop-shadows instead of typical soft box-shadows.",
+    "Use glass-morphism effects carefully. ONLY use it on headers or overlays, never on base cards.",
+    "You MUST NOT apply universal transition (e.g., `transition: all`). Always add transitions for specific interactive elements like button, input excluding transforms.",
+    "You MUST NOT center align the app container, i.e., do not add `.App { text-align: center; }` in the css file.",
+    "Always use modern button styles like sharp or pill-shaped with interaction animations & high-contrast text.",
+    "NEVER use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯 etc for icons. Use Phosphor Icons.",
+    "Every interaction needs micro-animations - hover states, transitions, parallax effects. Static = dead.",
+    "Use generous spacing. Cramped designs look cheap.",
+    "All interactive and key informational elements MUST include `data-testid` attribute (e.g. data-testid='login-btn').",
+    "Missing categories (especially user avatars or category covers) MUST utilize the provided image_urls. NEVER use placeholder text/domains."
+  ]
+}
