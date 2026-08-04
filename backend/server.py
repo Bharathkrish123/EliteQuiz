@@ -15,10 +15,6 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from dotenv import load_dotenv
 
-from emergentintegrations.payments.stripe.checkout import (
-    StripeCheckout, CheckoutSessionRequest,
-)
-
 from quiz_data import CATEGORIES, QUESTIONS
 
 ROOT_DIR = Path(__file__).parent
@@ -296,8 +292,6 @@ async def start_ai_quiz(data: AIQuizIn, authorization: Optional[str] = Header(de
                 "used": used,
                 "limit": FREE_AI_QUIZZES_PER_DAY,
             })
-
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
 
     session_id = str(uuid.uuid4())
     system_msg = (
