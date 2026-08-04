@@ -344,17 +344,25 @@ Format:
 """
 
     try:
-        # Fixed: use gemini_client instead of MongoDB client
-        response = gemini_client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-        )
+response = groq_client.chat.completions.create(
+    model="llama-3.3-70b-versatile",
+    messages=[
+        {
+            "role": "user",
+            "content": prompt
+        }
+    ],
+    temperature=0.7
+)
 
-        text = response.text
-        text = text.replace("```json", "").replace("```", "").strip()
+text = response.choices[0].message.content
 
-        parsed = json.loads(text)
-        items = parsed["questions"]
+text = text.replace("```json", "")
+text = text.replace("```", "")
+text = text.strip()
+
+parsed = json.loads(text)
+items = parsed["questions"]
     except Exception as e:
         logger.exception(e)
         raise HTTPException(
