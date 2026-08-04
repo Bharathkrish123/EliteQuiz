@@ -344,28 +344,26 @@ Format:
 }}
 """
 
-    try:
+try:
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents="...",
+    )
 
-response = client.models.generate_content(
-    model="gemini-2.5-flash",
-    contents="...",
-)
+    text = response.text
 
-        text = response.text
+    text = text.replace("```json", "")
+    text = text.replace("```", "")
+    text = text.strip()
 
-        text = text.replace("```json", "")
-        text = text.replace("```", "")
-        text = text.strip()
-
-        parsed = json.loads(text)
-        items = parsed["questions"]
-
-    except Exception as e:
-        logger.exception(e)
-        raise HTTPException(
-            status_code=500,
-            detail="AI generation failed"
-        )
+    parsed = json.loads(text)
+    items = parsed["questions"]
+except Exception as e:
+    logger.exception(e)
+    raise HTTPException(
+        status_code=500,
+        detail="AI generation failed"
+    )
 
     quiz_id = str(uuid.uuid4())
 
