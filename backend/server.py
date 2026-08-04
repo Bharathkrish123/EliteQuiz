@@ -345,30 +345,30 @@ Format:
 
 try:
     response = groq_client.chat.completions.create(
-    model="llama-3.3-70b-versatile",
-    messages=[
-        {
-            "role": "user",
-            "content": prompt
-        }
-    ],
-    temperature=0.7
-)
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        temperature=0.7
+    )
 
-text = response.choices[0].message.content
+    text = response.choices[0].message.content
+    text = text.replace("```json", "")
+    text = text.replace("```", "")
+    text = text.strip()
 
-text = text.replace("```json", "")
-text = text.replace("```", "")
-text = text.strip()
+    parsed = json.loads(text)
+    items = parsed["questions"]
 
-parsed = json.loads(text)
-items = parsed["questions"]
-    except Exception as e:
-        logger.exception(e)
-        raise HTTPException(
-            status_code=500,
-            detail="AI generation failed"
-        )
+except Exception as e:
+    logger.exception(e)
+    raise HTTPException(
+        status_code=500,
+        detail="AI generation failed"
+    )
 
     quiz_id = str(uuid.uuid4())
     stored_qs = []
