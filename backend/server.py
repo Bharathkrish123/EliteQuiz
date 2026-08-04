@@ -423,17 +423,6 @@ Format:
         "category_name": data.topic,
         "questions": client_qs
     }
-
-    # Increment free-tier daily counter (only if not pro)
-    if not is_pro:
-        key = user["id"] if user else None
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        q = {"user_id": key, "day": today} if key else {"anon": True, "day": today}
-        await db.ai_daily.update_one(q, {"$inc": {"count": 1}}, upsert=True)
-
-    return {"quiz_id": quiz_id, "category_id": "ai", "category_name": cat_name, "questions": client_qs}
-
-
 @api.post("/quiz/submit", response_model=SubmitOut)
 async def submit_quiz(
     data: SubmitIn,
