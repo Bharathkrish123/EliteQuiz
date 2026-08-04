@@ -346,10 +346,10 @@ Format:
 
     try:
 
-        response = gemini_client.models.generate_content(
-            model="gemini-2.5-flash-lite",
-            contents=prompt
-        )
+response = client.models.generate_content(
+    model="gemini-2.5-flash",
+    contents="...",
+)
 
         text = response.text
 
