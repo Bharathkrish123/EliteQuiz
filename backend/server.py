@@ -297,7 +297,6 @@ async def start_ai_quiz(
     if not is_pro:
 
         key = user["id"] if user else None
-
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
         q = {"user_id": key, "day": today} if key else {
@@ -306,7 +305,6 @@ async def start_ai_quiz(
         }
 
         rec = await db.ai_daily.find_one(q)
-
         used = (rec or {}).get("count", 0)
 
         if used >= FREE_AI_QUIZZES_PER_DAY:
@@ -321,18 +319,17 @@ async def start_ai_quiz(
     prompt = f"""
 You are a professional quiz generator.
 
-Generate exactly {data.count} multiple-choice questions about:
+Generate exactly {data.count} multiple choice questions about:
 
 {data.topic}
 
 Rules:
-
-- Return ONLY JSON.
+- Return ONLY valid JSON.
 - No markdown.
 - No explanation.
 - Exactly {data.count} questions.
 - Four options.
-- Correct answer index 0-3.
+- Correct answer index from 0 to 3.
 
 Format:
 
@@ -349,34 +346,30 @@ Format:
 
     try:
 
-    
-    response = gemini_client.models.generate_content(
-        model="gemini-2.5-flash-lite",
-        contents=prompt
-    )
+        response = gemini_client.models.generate_content(
+            model="gemini-2.5-flash-lite",
+            contents=prompt
+        )
 
-    text = response.text
+        text = response.text
 
-    text = text.replace("```json", "")
-    text = text.replace("```", "")
-    text = text.strip()
+        text = text.replace("```json", "")
+        text = text.replace("```", "")
+        text = text.strip()
 
-    parsed = json.loads(text)
+        parsed = json.loads(text)
+        items = parsed["questions"]
 
-    items = parsed["questions"]
-
-except Exception as e:
-    logger.exception(e)
-    raise HTTPException(
-        status_code=500,
-        detail="AI generation failed"
-    
+    except Exception as e:
+        logger.exception(e)
+        raise HTTPException(
+            status_code=500,
+            detail="AI generation failed"
         )
 
     quiz_id = str(uuid.uuid4())
 
     stored_qs = []
-
     client_qs = []
 
     for item in items:
