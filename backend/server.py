@@ -357,6 +357,12 @@ response = groq_client.chat.completions.create(
 
 text = response.choices[0].message.content
 
+text = text.replace("```json", "")
+text = text.replace("```", "")
+text = text.strip()
+
+parsed = json.loads(text)
+items = parsed["questions"]
 parsed = json.loads(text)
 items = parsed["questions"]
     except Exception as e:
