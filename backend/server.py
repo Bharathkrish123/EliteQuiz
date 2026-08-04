@@ -305,43 +305,18 @@ client = genai.Client(
         "array; each item has 'q' (string), 'opts' (array of exactly 4 short strings), "
         "and 'a' (integer 0-3 index of the correct option)."
     )
-    chat = LlmChat(
-        api_key=GEMINI_API_KEY,
-        session_id=session_id,
-        system_message=system_msg,
-    ).with_model("gemini", "gemini-2.5-flash")
+    model = client.models.generate_content(
+    model="gemini-2.5-flash",
+    contents=user_prompt,
+)
+
+text = model.text.strip()
 
     user_prompt = (
         f"Generate exactly {data.count} challenging multiple-choice trivia questions on the topic: "
         f"'{data.topic}'. Difficulty: mixed. Keep options concise (<= 6 words). "
         f'Return JSON in this exact shape: {{"questions": [{{"q": "...", "opts": ["a","b","c","d"], "a": 0}}]}}'
     )
-    try:
-        raw = await chat.send_message(UserMessage(text=user_prompt))
-    except Exception as e:
-        logger.exception("AI quiz generation failed")
-        raise HTTPException(status_code=502, detail=f"AI generation failed: {e}")
-
-    text = raw.strip()
-    # Strip common code fences if any
-    if text.startswith("```"):
-        text = text.strip("`")
-        # remove optional leading 'json'
-        if text.lower().startswith("json"):
-            text = text[4:]
-    # Extract JSON object substring safely
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1:
-        raise HTTPException(status_code=502, detail="AI returned invalid response")
-    try:
-        parsed = json.loads(text[start:end + 1])
-        items = parsed.get("questions", [])
-        if not items:
-            raise ValueError("empty questions")
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"AI JSON parse error: {e}")
-
     quiz_id = str(uuid.uuid4())
     stored_qs, client_qs = [], []
     for it in items[:data.count]:
