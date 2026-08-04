@@ -34,8 +34,8 @@ JWT_EXP_MINUTES = 60 * 24 * 7  # 7 days
 PACKAGES = {
     "elite_pro_lifetime": {
         "name": "Elite Pro — Lifetime",
-        "amount": 9.99,
-        "currency": "usd",
+        "amount": 10,
+        "currency": "INR",
         "description": "One-time · unlocks unlimited AI quizzes + Pro badge forever.",
     },
 }
@@ -43,7 +43,10 @@ FREE_AI_QUIZZES_PER_DAY = 3
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
-
+# Initialize Gemini client
+gemini_client = genai.Client(
+    api_key=GEMINI_API_KEY
+)
 app = FastAPI(title="EliteQuizGame API")
 api = APIRouter(prefix="/api")
 
