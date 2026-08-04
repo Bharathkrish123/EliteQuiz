@@ -370,7 +370,7 @@ except Exception as e:
         detail="AI generation failed"
     )
 
-    quiz_id = str(uuid.uuid4())
+quiz_id = str(uuid.uuid4())
     stored_qs = []
     client_qs = []
 
