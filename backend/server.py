@@ -349,29 +349,28 @@ Format:
 
     try:
 
+    try:
     response = gemini_client.models.generate_content(
-    model="gemini-2.5-flash-lite",
-    contents=prompt
-)
+        model="gemini-2.5-flash-lite",
+        contents=prompt
+    )
 
-text = interaction.output_text
-        )
+    text = response.text
 
-        text = response.text
+    text = text.replace("```json", "")
+    text = text.replace("```", "")
+    text = text.strip()
 
-        text = text.replace("```json", "")
-        text = text.replace("```", "")
-        text = text.strip()
+    parsed = json.loads(text)
 
-        parsed = json.loads(text)
+    items = parsed["questions"]
 
-        items = parsed["questions"]
-
-    except Exception as e:
-        logger.exception(e)
-        raise HTTPException(
-            status_code=500,
-            detail="AI generation failed"
+except Exception as e:
+    logger.exception(e)
+    raise HTTPException(
+        status_code=500,
+        detail="AI generation failed"
+    
         )
 
     quiz_id = str(uuid.uuid4())
