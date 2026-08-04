@@ -1,3 +1,5 @@
+from google import genai
+import json
 import os
 import json
 import uuid
@@ -23,7 +25,7 @@ load_dotenv(ROOT_DIR / ".env")
 MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]
 JWT_SECRET = os.environ["JWT_SECRET"]
-EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "sk_test_emergent")
 JWT_ALG = "HS256"
 JWT_EXP_MINUTES = 60 * 24 * 7  # 7 days
@@ -267,9 +269,15 @@ async def start_quiz(category_id: str):
 
 
 @api.post("/quiz/ai/start", response_model=QuizStartOut)
-async def start_ai_quiz(data: AIQuizIn, authorization: Optional[str] = Header(default=None)):
-    # Enforce free-tier daily limit unless the user is Pro. Guests are treated as free tier.
+async def start_ai_quiz(
+    data: AIQuizIn,
+    authorization: Optional[str] = Header(default=None)
+):
+    # ---------------------------
+    # Check logged-in user
+    # ---------------------------
     user = None
+
     if authorization and authorization.lower().startswith("bearer "):
         try:
             token = authorization.split(" ", 1)[1]
@@ -279,70 +287,142 @@ async def start_ai_quiz(data: AIQuizIn, authorization: Optional[str] = Header(de
             user = None
 
     is_pro = bool(user and user.get("is_pro"))
+
+    # ---------------------------
+    # Daily free limit
+    # ---------------------------
     if not is_pro:
+
         key = user["id"] if user else None
+
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        q = {"user_id": key, "day": today} if key else {"anon": True, "day": today}
+
+        q = {"user_id": key, "day": today} if key else {
+            "anon": True,
+            "day": today
+        }
+
         rec = await db.ai_daily.find_one(q)
+
         used = (rec or {}).get("count", 0)
+
         if used >= FREE_AI_QUIZZES_PER_DAY:
-            raise HTTPException(status_code=402, detail={
-                "code": "AI_LIMIT_REACHED",
-                "message": f"Free tier: {FREE_AI_QUIZZES_PER_DAY} AI quizzes per day. Upgrade to Elite Pro for unlimited.",
-                "used": used,
-                "limit": FREE_AI_QUIZZES_PER_DAY,
-            })
-import os
-from google import genai
+            raise HTTPException(
+                status_code=402,
+                detail="Daily AI quiz limit reached."
+            )
 
-client = genai.Client(
-    api_key=os.environ["GEMINI_API_KEY"]
-)
-    session_id = str(uuid.uuid4())
-    system_msg = (
-        "You are a quiz question generator. Return ONLY valid JSON — no markdown, "
-        "no code fences, no extra text. The JSON must be an object with a 'questions' "
-        "array; each item has 'q' (string), 'opts' (array of exactly 4 short strings), "
-        "and 'a' (integer 0-3 index of the correct option)."
-    )
-    model = client.models.generate_content(
-    model="gemini-2.5-flash",
-    contents=user_prompt,
-)
+    # ---------------------------
+    # Prompt
+    # ---------------------------
+    prompt = f"""
+You are a professional quiz generator.
 
-text = model.text.strip()
+Generate exactly {data.count} multiple-choice questions about:
 
-    user_prompt = (
-        f"Generate exactly {data.count} challenging multiple-choice trivia questions on the topic: "
-        f"'{data.topic}'. Difficulty: mixed. Keep options concise (<= 6 words). "
-        f'Return JSON in this exact shape: {{"questions": [{{"q": "...", "opts": ["a","b","c","d"], "a": 0}}]}}'
-    )
+{data.topic}
+
+Rules:
+
+- Return ONLY JSON.
+- No markdown.
+- No explanation.
+- Exactly {data.count} questions.
+- Four options.
+- Correct answer index 0-3.
+
+Format:
+
+{{
+  "questions":[
+    {{
+      "q":"Question",
+      "opts":["A","B","C","D"],
+      "a":0
+    }}
+  ]
+}}
+"""
+
+    try:
+
+        response = gemini_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt
+        )
+
+        text = response.text
+
+        text = text.replace("```json", "")
+        text = text.replace("```", "")
+        text = text.strip()
+
+        parsed = json.loads(text)
+
+        items = parsed["questions"]
+
+    except Exception as e:
+        logger.exception(e)
+        raise HTTPException(
+            status_code=500,
+            detail="AI generation failed"
+        )
+
     quiz_id = str(uuid.uuid4())
-    stored_qs, client_qs = [], []
-    for it in items[:data.count]:
-        try:
-            q_text = str(it["q"])
-            opts = [str(o) for o in it["opts"]]
-            a = int(it["a"])
-            if len(opts) != 4 or not (0 <= a <= 3):
-                continue
-        except Exception:
-            continue
+
+    stored_qs = []
+
+    client_qs = []
+
+    for item in items:
+
         qid = str(uuid.uuid4())
-        stored_qs.append({"id": qid, "question": q_text, "options": opts, "answer_index": a, "explanation": ""})
-        client_qs.append({"id": qid, "question": q_text, "options": opts})
 
-    if len(stored_qs) < 3:
-        raise HTTPException(status_code=502, detail="AI returned too few valid questions, try another topic")
+        stored_qs.append({
+            "id": qid,
+            "question": item["q"],
+            "options": item["opts"],
+            "answer_index": item["a"],
+            "explanation": ""
+        })
 
-    cat_name = f"AI: {data.topic[:40]}"
+        client_qs.append({
+            "id": qid,
+            "question": item["q"],
+            "options": item["opts"]
+        })
+
     await db.quizzes.insert_one({
         "id": quiz_id,
         "category_id": "ai",
-        "category_name": cat_name,
+        "category_name": data.topic,
         "questions": stored_qs,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat()
     })
+
+    if not is_pro:
+
+        key = user["id"] if user else None
+
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        q = {"user_id": key, "day": today} if key else {
+            "anon": True,
+            "day": today
+        }
+
+        await db.ai_daily.update_one(
+            q,
+            {"$inc": {"count": 1}},
+            upsert=True
+        )
+
+    return {
+        "quiz_id": quiz_id,
+        "category_id": "ai",
+        "category_name": data.topic,
+        "questions": client_qs
+    }
 
     # Increment free-tier daily counter (only if not pro)
     if not is_pro:
