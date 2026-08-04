@@ -1,4 +1,4 @@
-from google import genai
+from openai import OpenAI
 import json
 import os
 import json
@@ -25,7 +25,7 @@ load_dotenv(ROOT_DIR / ".env")
 MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]
 JWT_SECRET = os.environ["JWT_SECRET"]
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "sk_test_emergent")
 JWT_ALG = "HS256"
 JWT_EXP_MINUTES = 60 * 24 * 7  # 7 days
@@ -43,9 +43,9 @@ FREE_AI_QUIZZES_PER_DAY = 3
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
-# Initialize Gemini client
-gemini_client = genai.Client(
-    api_key=GEMINI_API_KEY
+groq_client = OpenAI(
+    api_key=GROQ_API_KEY,
+    base_url="https://api.groq.com/openai/v1"
 )
 app = FastAPI(title="EliteQuizGame API")
 api = APIRouter(prefix="/api")
