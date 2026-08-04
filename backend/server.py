@@ -343,8 +343,8 @@ Format:
 }}
 """
 
-    try:
-response = groq_client.chat.completions.create(
+try:
+    response = groq_client.chat.completions.create(
     model="llama-3.3-70b-versatile",
     messages=[
         {
@@ -361,8 +361,6 @@ text = text.replace("```json", "")
 text = text.replace("```", "")
 text = text.strip()
 
-parsed = json.loads(text)
-items = parsed["questions"]
 parsed = json.loads(text)
 items = parsed["questions"]
     except Exception as e:
