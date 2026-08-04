@@ -292,7 +292,12 @@ async def start_ai_quiz(data: AIQuizIn, authorization: Optional[str] = Header(de
                 "used": used,
                 "limit": FREE_AI_QUIZZES_PER_DAY,
             })
+import os
+from google import genai
 
+client = genai.Client(
+    api_key=os.environ["GEMINI_API_KEY"]
+)
     session_id = str(uuid.uuid4())
     system_msg = (
         "You are a quiz question generator. Return ONLY valid JSON — no markdown, "
@@ -301,7 +306,7 @@ async def start_ai_quiz(data: AIQuizIn, authorization: Optional[str] = Header(de
         "and 'a' (integer 0-3 index of the correct option)."
     )
     chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
+        api_key=GEMINI_API_KEY,
         session_id=session_id,
         system_message=system_msg,
     ).with_model("gemini", "gemini-2.5-flash")
