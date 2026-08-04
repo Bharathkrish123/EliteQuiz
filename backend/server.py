@@ -313,7 +313,7 @@ async def start_ai_quiz(
             )
 
     # ---------------------------
-    # Prompt & Gemini API Call
+    # Prompt & Groq API Call
     # ---------------------------
     prompt = f"""
 You are a professional quiz generator.
@@ -356,10 +356,6 @@ response = groq_client.chat.completions.create(
 )
 
 text = response.choices[0].message.content
-
-text = text.replace("```json", "")
-text = text.replace("```", "")
-text = text.strip()
 
 parsed = json.loads(text)
 items = parsed["questions"]
@@ -534,7 +530,7 @@ async def my_history(user=Depends(get_current_user), limit: int = 20):
 
 
 # =========================
-# Payments (Stripe — Flow B via emergentintegrations)
+# Payments
 # =========================
 class CheckoutIn(BaseModel):
     package_id: str
