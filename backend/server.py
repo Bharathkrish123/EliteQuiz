@@ -349,13 +349,9 @@ Format:
 
     try:
 
-        from google import genai
-
-gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-
-interaction = gemini_client.interactions.create(
-    model="gemini-3.6-flash",
-    input=prompt
+    response = gemini_client.models.generate_content(
+    model="gemini-2.5-flash-lite",
+    contents=prompt
 )
 
 text = interaction.output_text
