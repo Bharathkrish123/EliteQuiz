@@ -295,7 +295,6 @@ async def start_ai_quiz(
     # Daily free limit
     # ---------------------------
     if not is_pro:
-
         key = user["id"] if user else None
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -314,7 +313,7 @@ async def start_ai_quiz(
             )
 
     # ---------------------------
-    # Prompt
+    # Prompt & Gemini API Call
     # ---------------------------
     prompt = f"""
 You are a professional quiz generator.
@@ -344,36 +343,31 @@ Format:
 }}
 """
 
-try:
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents="...",
-    )
+    try:
+        # Fixed: use gemini_client instead of MongoDB client
+        response = gemini_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
 
-    text = response.text
+        text = response.text
+        text = text.replace("```json", "").replace("```", "").strip()
 
-    text = text.replace("```json", "")
-    text = text.replace("```", "")
-    text = text.strip()
-
-    parsed = json.loads(text)
-    items = parsed["questions"]
-except Exception as e:
-    logger.exception(e)
-    raise HTTPException(
-        status_code=500,
-        detail="AI generation failed"
-    )
+        parsed = json.loads(text)
+        items = parsed["questions"]
+    except Exception as e:
+        logger.exception(e)
+        raise HTTPException(
+            status_code=500,
+            detail="AI generation failed"
+        )
 
     quiz_id = str(uuid.uuid4())
-
     stored_qs = []
     client_qs = []
 
     for item in items:
-
         qid = str(uuid.uuid4())
-
         stored_qs.append({
             "id": qid,
             "question": item["q"],
@@ -381,7 +375,6 @@ except Exception as e:
             "answer_index": item["a"],
             "explanation": ""
         })
-
         client_qs.append({
             "id": qid,
             "question": item["q"],
@@ -397,9 +390,7 @@ except Exception as e:
     })
 
     if not is_pro:
-
         key = user["id"] if user else None
-
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
         q = {"user_id": key, "day": today} if key else {
