@@ -401,23 +401,24 @@ for item in items:
         "answer_index": item["a"],
         "explanation": ""
     })
-            "id": qid,
-            "question": item["q"],
-            "options": item["opts"]
-        })
 
-    await db.quizzes.insert_one({
-        "id": quiz_id,
-        "category_id": "ai",
-        "category_name": data.topic,
-        "questions": stored_qs,
-        "created_at": datetime.now(timezone.utc).isoformat()
+    client_qs.append({
+        "id": qid,
+        "question": item["q"],
+        "options": item["opts"]
     })
 
-    if not is_pro:
-        key = user["id"] if user else None
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+await db.quizzes.insert_one({
+    "id": quiz_id,
+    "category_id": "ai",
+    "category_name": data.topic,
+    "questions": stored_qs,
+    "created_at": datetime.now(timezone.utc).isoformat()
+})
 
+if not is_pro:
+    key = user["id"] if user else None
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         q = {"user_id": key, "day": today} if key else {
             "anon": True,
             "day": today
