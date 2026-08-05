@@ -1,5 +1,3 @@
-from openai import OpenAI
-import json
 import os
 import json
 import uuid
@@ -17,6 +15,10 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from dotenv import load_dotenv
 
+from emergentintegrations.payments.stripe.checkout import (
+    StripeCheckout, CheckoutSessionRequest,
+)
+
 from quiz_data import CATEGORIES, QUESTIONS
 
 ROOT_DIR = Path(__file__).parent
@@ -25,8 +27,13 @@ load_dotenv(ROOT_DIR / ".env")
 MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]
 JWT_SECRET = os.environ["JWT_SECRET"]
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
 STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "sk_test_emergent")
+PAYPAL_CLIENT_ID = os.environ.get("PAYPAL_CLIENT_ID", "").strip()
+PAYPAL_CLIENT_SECRET = os.environ.get("PAYPAL_CLIENT_SECRET", "").strip()
+PAYPAL_ENV = os.environ.get("PAYPAL_ENV", "sandbox").strip()
+PAYPAL_BASE = "https://api-m.sandbox.paypal.com" if PAYPAL_ENV != "live" else "https://api-m.paypal.com"
+PAYPAL_CONFIGURED = bool(PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET)
 JWT_ALG = "HS256"
 JWT_EXP_MINUTES = 60 * 24 * 7  # 7 days
 
@@ -34,8 +41,8 @@ JWT_EXP_MINUTES = 60 * 24 * 7  # 7 days
 PACKAGES = {
     "elite_pro_lifetime": {
         "name": "Elite Pro — Lifetime",
-        "amount": 10,
-        "currency": "INR",
+        "amount": 9.99,
+        "currency": "usd",
         "description": "One-time · unlocks unlimited AI quizzes + Pro badge forever.",
     },
 }
@@ -43,10 +50,7 @@ FREE_AI_QUIZZES_PER_DAY = 3
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
-groq_client = OpenAI(
-    api_key=GROQ_API_KEY,
-    base_url="https://api.groq.com/openai/v1"
-)
+
 app = FastAPI(title="EliteQuizGame API")
 api = APIRouter(prefix="/api")
 
@@ -272,15 +276,9 @@ async def start_quiz(category_id: str):
 
 
 @api.post("/quiz/ai/start", response_model=QuizStartOut)
-async def start_ai_quiz(
-    data: AIQuizIn,
-    authorization: Optional[str] = Header(default=None)
-):
-    # ---------------------------
-    # Check logged-in user
-    # ---------------------------
+async def start_ai_quiz(data: AIQuizIn, authorization: Optional[str] = Header(default=None)):
+    # Enforce free-tier daily limit unless the user is Pro. Guests are treated as free tier.
     user = None
-
     if authorization and authorization.lower().startswith("bearer "):
         try:
             token = authorization.split(" ", 1)[1]
@@ -290,133 +288,103 @@ async def start_ai_quiz(
             user = None
 
     is_pro = bool(user and user.get("is_pro"))
-
-    # ---------------------------
-    # Daily free limit
-    # ---------------------------
     if not is_pro:
         key = user["id"] if user else None
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-        q = {"user_id": key, "day": today} if key else {
-            "anon": True,
-            "day": today
-        }
-
+        q = {"user_id": key, "day": today} if key else {"anon": True, "day": today}
         rec = await db.ai_daily.find_one(q)
         used = (rec or {}).get("count", 0)
-
         if used >= FREE_AI_QUIZZES_PER_DAY:
-            raise HTTPException(
-                status_code=402,
-                detail="Daily AI quiz limit reached."
-            )
+            raise HTTPException(status_code=402, detail={
+                "code": "AI_LIMIT_REACHED",
+                "message": f"Free tier: {FREE_AI_QUIZZES_PER_DAY} AI quizzes per day. Upgrade to Elite Pro for unlimited.",
+                "used": used,
+                "limit": FREE_AI_QUIZZES_PER_DAY,
+            })
 
-    # ---------------------------
-    # Prompt & Groq API Call
-    # ---------------------------
-    prompt = f"""
-You are a professional quiz generator.
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
 
-Generate exactly {data.count} multiple choice questions about:
+    session_id = str(uuid.uuid4())
+    system_msg = (
+        "You are a quiz question generator. Return ONLY valid JSON — no markdown, "
+        "no code fences, no extra text. The JSON must be an object with a 'questions' "
+        "array; each item has 'q' (string), 'opts' (array of exactly 4 short strings), "
+        "and 'a' (integer 0-3 index of the correct option)."
+    )
+    chat = LlmChat(
+        api_key=EMERGENT_LLM_KEY,
+        session_id=session_id,
+        system_message=system_msg,
+    ).with_model("gemini", "gemini-2.5-flash")
 
-{data.topic}
-
-Rules:
-- Return ONLY valid JSON.
-- No markdown.
-- No explanation.
-- Exactly {data.count} questions.
-- Four options.
-- Correct answer index from 0 to 3.
-
-Format:
-
-{{
-  "questions":[
-    {{
-      "q":"Question",
-      "opts":["A","B","C","D"],
-      "a":0
-    }}
-  ]
-}}
-"""
+    user_prompt = (
+        f"Generate exactly {data.count} challenging multiple-choice trivia questions on the topic: "
+        f"'{data.topic}'. Difficulty: mixed. Keep options concise (<= 6 words). "
+        f'Return JSON in this exact shape: {{"questions": [{{"q": "...", "opts": ["a","b","c","d"], "a": 0}}]}}'
+    )
     try:
-    response = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
-        temperature=0.7
-    )
+        raw = await chat.send_message(UserMessage(text=user_prompt))
+    except Exception as e:
+        logger.exception("AI quiz generation failed")
+        raise HTTPException(status_code=502, detail=f"AI generation failed: {e}")
 
-    text = response.choices[0].message.content
-    text = text.replace("```json", "")
-    text = text.replace("```", "")
-    text = text.strip()
+    text = raw.strip()
+    # Strip common code fences if any
+    if text.startswith("```"):
+        text = text.strip("`")
+        # remove optional leading 'json'
+        if text.lower().startswith("json"):
+            text = text[4:]
+    # Extract JSON object substring safely
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1:
+        raise HTTPException(status_code=502, detail="AI returned invalid response")
+    try:
+        parsed = json.loads(text[start:end + 1])
+        items = parsed.get("questions", [])
+        if not items:
+            raise ValueError("empty questions")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI JSON parse error: {e}")
 
-    parsed = json.loads(text)
-    items = parsed["questions"]
+    quiz_id = str(uuid.uuid4())
+    stored_qs, client_qs = [], []
+    for it in items[:data.count]:
+        try:
+            q_text = str(it["q"])
+            opts = [str(o) for o in it["opts"]]
+            a = int(it["a"])
+            if len(opts) != 4 or not (0 <= a <= 3):
+                continue
+        except Exception:
+            continue
+        qid = str(uuid.uuid4())
+        stored_qs.append({"id": qid, "question": q_text, "options": opts, "answer_index": a, "explanation": ""})
+        client_qs.append({"id": qid, "question": q_text, "options": opts})
 
-except Exception as e:
-    logger.exception(e)
-    raise HTTPException(
-        status_code=500,
-        detail="AI generation failed"
-    )
+    if len(stored_qs) < 3:
+        raise HTTPException(status_code=502, detail="AI returned too few valid questions, try another topic")
 
-quiz_id = str(uuid.uuid4())
-stored_qs = []
-client_qs = []
-
-for item in items:
-    qid = str(uuid.uuid4())
-
-    stored_qs.append({
-        "id": qid,
-        "question": item["q"],
-        "options": item["opts"],
-        "answer_index": item["a"],
-        "explanation": ""
-    })
-            "id": qid,
-            "question": item["q"],
-            "options": item["opts"]
-        })
-
+    cat_name = f"AI: {data.topic[:40]}"
     await db.quizzes.insert_one({
         "id": quiz_id,
         "category_id": "ai",
-        "category_name": data.topic,
+        "category_name": cat_name,
         "questions": stored_qs,
-        "created_at": datetime.now(timezone.utc).isoformat()
+        "created_at": datetime.now(timezone.utc).isoformat(),
     })
 
+    # Increment free-tier daily counter (only if not pro)
     if not is_pro:
         key = user["id"] if user else None
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        q = {"user_id": key, "day": today} if key else {"anon": True, "day": today}
+        await db.ai_daily.update_one(q, {"$inc": {"count": 1}}, upsert=True)
 
-        q = {"user_id": key, "day": today} if key else {
-            "anon": True,
-            "day": today
-        }
+    return {"quiz_id": quiz_id, "category_id": "ai", "category_name": cat_name, "questions": client_qs}
 
-        await db.ai_daily.update_one(
-            q,
-            {"$inc": {"count": 1}},
-            upsert=True
-        )
 
-    return {
-        "quiz_id": quiz_id,
-        "category_id": "ai",
-        "category_name": data.topic,
-        "questions": client_qs
-    }
 @api.post("/quiz/submit", response_model=SubmitOut)
 async def submit_quiz(
     data: SubmitIn,
@@ -533,7 +501,7 @@ async def my_history(user=Depends(get_current_user), limit: int = 20):
 
 
 # =========================
-# Payments
+# Payments (Stripe — Flow B via emergentintegrations)
 # =========================
 class CheckoutIn(BaseModel):
     package_id: str
@@ -589,6 +557,7 @@ async def create_checkout(data: CheckoutIn, request: Request, authorization: Opt
     # Persist BEFORE returning
     await db.payment_transactions.insert_one({
         "session_id": session.session_id,
+        "provider": "stripe",
         "user_id": user_id,
         "package_id": data.package_id,
         "amount": pkg["amount"],
@@ -614,23 +583,26 @@ async def payment_status(session_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Transaction not found")
 
     if txn.get("payment_status") != "paid":
-        try:
-            sc = _stripe_checkout(request)
-            status = await sc.get_checkout_status(session_id)
-            if status.payment_status == "paid" or status.status == "complete":
-                res = await db.payment_transactions.update_one(
-                    {"session_id": session_id, "payment_status": {"$ne": "paid"}},
-                    {"$set": {
-                        "status": "completed",
-                        "payment_status": "paid",
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }},
-                )
-                if res.modified_count:
-                    await _apply_paid_side_effects(txn)
-                txn = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
-        except Exception as e:
-            logger.warning(f"status poll error: {e}")
+        provider = txn.get("provider", "stripe")
+        if provider == "stripe":
+            try:
+                sc = _stripe_checkout(request)
+                status = await sc.get_checkout_status(session_id)
+                if status.payment_status == "paid" or status.status == "complete":
+                    res = await db.payment_transactions.update_one(
+                        {"session_id": session_id, "payment_status": {"$ne": "paid"}},
+                        {"$set": {
+                            "status": "completed",
+                            "payment_status": "paid",
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        }},
+                    )
+                    if res.modified_count:
+                        await _apply_paid_side_effects(txn)
+                    txn = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+            except Exception as e:
+                logger.warning(f"status poll error: {e}")
+        # For PayPal, capture endpoint is the source of truth — no polling needed here.
 
     return {
         "session_id": txn["session_id"],
@@ -669,6 +641,174 @@ async def stripe_webhook(request: Request):
 
 
 # =========================
+# Payments (PayPal — REST API v2)
+# =========================
+import httpx
+
+
+@api.get("/payments/paypal/config")
+async def paypal_config():
+    """Frontend calls this to decide whether to render Smart Buttons."""
+    return {
+        "configured": PAYPAL_CONFIGURED,
+        "client_id": PAYPAL_CLIENT_ID if PAYPAL_CONFIGURED else None,
+        "env": PAYPAL_ENV,
+    }
+
+
+async def _paypal_access_token() -> str:
+    if not PAYPAL_CONFIGURED:
+        raise HTTPException(status_code=503, detail="PayPal not configured. Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET in backend/.env")
+    async with httpx.AsyncClient(timeout=30) as http:
+        r = await http.post(
+            f"{PAYPAL_BASE}/v1/oauth2/token",
+            auth=(PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET),
+            data={"grant_type": "client_credentials"},
+            headers={"Accept": "application/json"},
+        )
+    if r.status_code >= 400:
+        logger.error(f"PayPal auth failed: {r.status_code} {r.text[:200]}")
+        raise HTTPException(status_code=502, detail="PayPal auth failed — check credentials")
+    return r.json()["access_token"]
+
+
+class PayPalCreateIn(BaseModel):
+    package_id: str
+
+
+@api.post("/payments/paypal/create-order")
+async def paypal_create_order(data: PayPalCreateIn, authorization: Optional[str] = Header(default=None)):
+    pkg = PACKAGES.get(data.package_id)
+    if not pkg:
+        raise HTTPException(status_code=400, detail="Unknown package")
+
+    # Attach user_id if authenticated
+    user_id = None
+    if authorization and authorization.lower().startswith("bearer "):
+        try:
+            payload = jwt.decode(authorization.split(" ", 1)[1], JWT_SECRET, algorithms=[JWT_ALG])
+            user_id = payload.get("sub")
+        except Exception:
+            user_id = None
+
+    token = await _paypal_access_token()
+    body = {
+        "intent": "CAPTURE",
+        "purchase_units": [{
+            "reference_id": data.package_id,
+            "description": pkg["description"],
+            "amount": {"currency_code": pkg["currency"].upper(), "value": f"{pkg['amount']:.2f}"},
+        }],
+        "application_context": {
+            "brand_name": "EliteQuizGame",
+            "shipping_preference": "NO_SHIPPING",
+            "user_action": "PAY_NOW",
+        },
+    }
+    async with httpx.AsyncClient(timeout=30) as http:
+        r = await http.post(
+            f"{PAYPAL_BASE}/v2/checkout/orders",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json=body,
+        )
+    if r.status_code >= 400:
+        logger.error(f"PayPal create order failed: {r.status_code} {r.text[:400]}")
+        raise HTTPException(status_code=502, detail="Failed to create PayPal order")
+    order = r.json()
+
+    await db.payment_transactions.insert_one({
+        "session_id": order["id"],  # reuse key across providers
+        "provider": "paypal",
+        "user_id": user_id,
+        "package_id": data.package_id,
+        "amount": pkg["amount"],
+        "currency": pkg["currency"],
+        "status": "initiated",
+        "payment_status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"order_id": order["id"]}
+
+
+@api.post("/payments/paypal/capture/{order_id}")
+async def paypal_capture(order_id: str):
+    txn = await db.payment_transactions.find_one({"session_id": order_id})
+    if not txn:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    # Idempotent — already paid
+    if txn.get("payment_status") == "paid":
+        return {"status": "completed", "payment_status": "paid"}
+
+    token = await _paypal_access_token()
+    async with httpx.AsyncClient(timeout=30) as http:
+        r = await http.post(
+            f"{PAYPAL_BASE}/v2/checkout/orders/{order_id}/capture",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+        )
+    if r.status_code >= 400:
+        logger.error(f"PayPal capture failed: {r.status_code} {r.text[:400]}")
+        raise HTTPException(status_code=502, detail="PayPal capture failed")
+    result = r.json()
+    status_str = result.get("status", "").upper()
+
+    if status_str == "COMPLETED":
+        res = await db.payment_transactions.update_one(
+            {"session_id": order_id, "payment_status": {"$ne": "paid"}},
+            {"$set": {
+                "status": "completed",
+                "payment_status": "paid",
+                "provider_raw_status": status_str,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }},
+        )
+        if res.modified_count:
+            fresh = await db.payment_transactions.find_one({"session_id": order_id}, {"_id": 0})
+            if fresh:
+                await _apply_paid_side_effects(fresh)
+        return {"status": "completed", "payment_status": "paid"}
+
+    # Not yet captured
+    await db.payment_transactions.update_one(
+        {"session_id": order_id},
+        {"$set": {"provider_raw_status": status_str, "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"status": txn.get("status", "initiated"), "payment_status": txn.get("payment_status", "pending")}
+
+
+@api.post("/webhook/paypal")
+async def paypal_webhook(request: Request):
+    """Optional webhook — polling+capture on frontend is the primary path."""
+    body = await request.json()
+    event_type = body.get("event_type", "")
+    resource = body.get("resource", {})
+
+    if event_type in ("CHECKOUT.ORDER.APPROVED", "PAYMENT.CAPTURE.COMPLETED"):
+        order_id = resource.get("id") if event_type.startswith("CHECKOUT") else resource.get("supplementary_data", {}).get("related_ids", {}).get("order_id")
+        if order_id:
+            res = await db.payment_transactions.update_one(
+                {"session_id": order_id, "payment_status": {"$ne": "paid"}},
+                {"$set": {
+                    "status": "completed",
+                    "payment_status": "paid",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }},
+            )
+            if res.modified_count:
+                txn = await db.payment_transactions.find_one({"session_id": order_id}, {"_id": 0})
+                if txn:
+                    await _apply_paid_side_effects(txn)
+    return {"ok": True}
+
+
+# =========================
 # App wiring
 # =========================
 app.include_router(api)
@@ -680,8 +820,3 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
