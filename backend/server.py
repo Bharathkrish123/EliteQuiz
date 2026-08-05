@@ -363,29 +363,27 @@ try:
     parsed = json.loads(text)
     items = parsed["questions"]
 
-    except Exception as e:
-        logger.exception(e)
-        raise HTTPException(
-            status_code=500,
-            detail="AI generation failed"
-        )
+except Exception as e:
+    logger.exception(e)
+    raise HTTPException(
+        status_code=500,
+        detail="AI generation failed"
+    )
 
-    quiz_id = str(uuid.uuid4())
-    stored_qs = []
-    client_qs = []
+quiz_id = str(uuid.uuid4())
+stored_qs = []
+client_qs = []
 
-    for item in items:
-        qid = str(uuid.uuid4())
+for item in items:
+    qid = str(uuid.uuid4())
 
-        stored_qs.append({
-            "id": qid,
-            "question": item["q"],
-            "options": item["opts"],
-            "answer_index": item["a"],
-            "explanation": ""
-        })
-
-        client_qs.append({
+    stored_qs.append({
+        "id": qid,
+        "question": item["q"],
+        "options": item["opts"],
+        "answer_index": item["a"],
+        "explanation": ""
+    })
             "id": qid,
             "question": item["q"],
             "options": item["opts"]
