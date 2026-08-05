@@ -342,7 +342,6 @@ Format:
   ]
 }}
 """
-
     try:
     response = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
