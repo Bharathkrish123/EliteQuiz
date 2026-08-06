@@ -419,11 +419,17 @@ await db.quizzes.insert_one({
 if not is_pro:
     key = user["id"] if user else None
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        q = {"user_id": key, "day": today} if key else {
+
+    if key:
+        q = {
+            "user_id": key,
+            "day": today
+        }
+    else:
+        q = {
             "anon": True,
             "day": today
         }
-
         await db.ai_daily.update_one(
             q,
             {"$inc": {"count": 1}},
