@@ -343,93 +343,79 @@ JSON format:
 }}
 """
 
-try:
+    try:
+        response = client.chat.completions.create(
+            model="deepseek/deepseek-chat",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Return only valid JSON."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            temperature=0.7,
+            max_tokens=2500
+        )
 
-    response = client.chat.completions.create(
+        text = response.choices[0].message.content.strip()
 
-        model="deepseek/deepseek-chat",
+        if text.startswith("```json"):
+            text = text.replace("```json", "")
 
-        messages=[
-            {
-                "role": "system",
-                "content": "Return only valid JSON."
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
+        if text.endswith("```"):
+            text = text[:-3]
 
-        temperature=0.7,
-        max_tokens=2500
+        text = text.strip()
 
-    )
+        parsed = json.loads(text)
 
-    text = response.choices[0].message.content.strip()
+        items = parsed["questions"]
 
-    if text.startswith("```json"):
-        text = text.replace("```json", "")
+    except Exception as e:
+        logger.exception(e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI generation failed: {str(e)}"
+        )
 
-    if text.endswith("```"):
-        text = text[:-3]
+    quiz_id = str(uuid.uuid4())
+    stored_qs = []
+    client_qs = []
 
-    text = text.strip()
+    for item in items:
+        qid = str(uuid.uuid4())
 
-    parsed = json.loads(text)
+        stored_qs.append({
+            "id": qid,
+            "question": item["q"],
+            "options": item["opts"],
+            "answer_index": item["a"],
+            "explanation": ""
+        })
 
-    items = parsed["questions"]
+        client_qs.append({
+            "id": qid,
+            "question": item["q"],
+            "options": item["opts"]
+        })
 
-except Exception as e:
-
-    logger.exception(e)
-
-    raise HTTPException(
-        status_code=500,
-        detail=f"AI generation failed: {str(e)}"
-    )
-quiz_id = str(uuid.uuid4())
-stored_qs = []
-client_qs = []
-
-for item in items:
-    qid = str(uuid.uuid4())
-
-    stored_qs.append({
-        "id": qid,
-        "question": item["q"],
-        "options": item["opts"],
-        "answer_index": item["a"],
-        "explanation": ""
+    await db.quizzes.insert_one({
+        "id": quiz_id,
+        "category_id": "ai",
+        "category_name": data.topic,
+        "questions": stored_qs,
+        "created_at": datetime.now(timezone.utc).isoformat()
     })
 
-    client_qs.append({
-        "id": qid,
-        "question": item["q"],
-        "options": item["opts"]
-    })
+    if not is_pro:
+        key = user["id"] if user else None
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-await db.quizzes.insert_one({
-    "id": quiz_id,
-    "category_id": "ai",
-    "category_name": data.topic,
-    "questions": stored_qs,
-    "created_at": datetime.now(timezone.utc).isoformat()
-})
+        q = {"user_id": key, "day": today} if key else {"anon": True, "day": today}
 
-if not is_pro:
-    key = user["id"] if user else None
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-    if key:
-        q = {
-            "user_id": key,
-            "day": today
-        }
-    else:
-        q = {
-            "anon": True,
-            "day": today
-        }
         await db.ai_daily.update_one(
             q,
             {"$inc": {"count": 1}},
