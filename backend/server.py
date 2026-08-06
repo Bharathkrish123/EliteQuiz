@@ -11,6 +11,7 @@ from typing import List, Optional
 
 import bcrypt
 import jwt
+import stripe
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, Request
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -26,9 +27,12 @@ MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "sk_test_emergent")
+STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 JWT_ALG = "HS256"
 JWT_EXP_MINUTES = 60 * 24 * 7  # 7 days
+
+stripe.api_key = STRIPE_API_KEY
 
 # Server-defined product catalog — clients only send package_id, never amounts.
 PACKAGES = {
@@ -561,13 +565,6 @@ async def list_packages():
     }
 
 
-def _stripe_checkout(request: Request) -> StripeCheckout:
-    # Build webhook URL from incoming request base_url — never hardcode
-    host_url = str(request.base_url)
-    webhook_url = f"{host_url.rstrip('/')}/api/webhook/stripe"
-    return StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
-
-
 @api.post("/payments/checkout")
 async def create_checkout(data: CheckoutIn, request: Request, authorization: Optional[str] = Header(default=None)):
     pkg = PACKAGES.get(data.package_id)
@@ -587,19 +584,30 @@ async def create_checkout(data: CheckoutIn, request: Request, authorization: Opt
     success_url = f"{origin}/payment/success?session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = f"{origin}/payment/cancel"
 
-    sc = _stripe_checkout(request)
-    req = CheckoutSessionRequest(
-        amount=float(pkg["amount"]),
-        currency=pkg["currency"],
-        success_url=success_url,
-        cancel_url=cancel_url,
-        metadata={"user_id": user_id or "", "package_id": data.package_id},
-    )
-    session = await sc.create_checkout_session(req)
+    try:
+        session = stripe.checkout.Session.create(
+            mode="payment",
+            payment_method_types=["card"],
+            line_items=[{
+                "price_data": {
+                    "currency": pkg["currency"].lower(),
+                    "product_data": {"name": pkg["name"]},
+                    # Stripe wants the smallest currency unit (e.g. paise for INR)
+                    "unit_amount": int(round(pkg["amount"] * 100)),
+                },
+                "quantity": 1,
+            }],
+            success_url=success_url,
+            cancel_url=cancel_url,
+            metadata={"user_id": user_id or "", "package_id": data.package_id},
+        )
+    except stripe.error.StripeError as e:
+        logger.exception(e)
+        raise HTTPException(status_code=502, detail=f"Stripe error: {str(e)}")
 
     # Persist BEFORE returning
     await db.payment_transactions.insert_one({
-        "session_id": session.session_id,
+        "session_id": session.id,
         "user_id": user_id,
         "package_id": data.package_id,
         "amount": pkg["amount"],
@@ -609,7 +617,7 @@ async def create_checkout(data: CheckoutIn, request: Request, authorization: Opt
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     })
-    return {"checkout_url": session.url, "session_id": session.session_id}
+    return {"checkout_url": session.url, "session_id": session.id}
 
 
 async def _apply_paid_side_effects(txn: dict):
@@ -626,8 +634,7 @@ async def payment_status(session_id: str, request: Request):
 
     if txn.get("payment_status") != "paid":
         try:
-            sc = _stripe_checkout(request)
-            status = await sc.get_checkout_status(session_id)
+            status = stripe.checkout.Session.retrieve(session_id)
             if status.payment_status == "paid" or status.status == "complete":
                 res = await db.payment_transactions.update_one(
                     {"session_id": session_id, "payment_status": {"$ne": "paid"}},
@@ -653,16 +660,20 @@ async def payment_status(session_id: str, request: Request):
 @api.post("/webhook/stripe")
 async def stripe_webhook(request: Request):
     body = await request.body()
-    sig = request.headers.get("Stripe-Signature", "") or request.headers.get("stripe-signature", "")
-    sc = _stripe_checkout(request)
+    sig = request.headers.get("stripe-signature", "")
     try:
-        evt = await sc.handle_webhook(body, sig)
+        evt = stripe.Webhook.construct_event(body, sig, STRIPE_WEBHOOK_SECRET)
     except Exception as e:
         logger.warning(f"webhook verify error: {e}")
         raise HTTPException(status_code=400, detail="Invalid webhook")
 
-    session_id = getattr(evt, "session_id", None)
-    payment_status_val = getattr(evt, "payment_status", None)
+    session_id = None
+    payment_status_val = None
+    if evt["type"] == "checkout.session.completed":
+        session_obj = evt["data"]["object"]
+        session_id = session_obj.get("id")
+        payment_status_val = session_obj.get("payment_status")
+
     if session_id and payment_status_val == "paid":
         res = await db.payment_transactions.update_one(
             {"session_id": session_id, "payment_status": {"$ne": "paid"}},
