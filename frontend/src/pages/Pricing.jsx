@@ -6,6 +6,23 @@ import { useAuth } from "@/context/AuthContext";
 import { Crown, Check, Lightning, Sparkle, Infinity as InfinityIcon } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
+function loadRazorpayScript() {
+  return new Promise((resolve) => {
+    if (window.Razorpay) return resolve(true);
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+}
+
+function formatPrice(pkg) {
+  if (!pkg) return null;
+  const symbol = pkg.currency === "INR" ? "₹" : pkg.currency === "USD" ? "$" : `${pkg.currency} `;
+  return `${symbol}${pkg.amount}`;
+}
+
 export default function Pricing() {
   const [pkgs, setPkgs] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -14,10 +31,9 @@ export default function Pricing() {
 
   useEffect(() => {
     api.get("/payments/packages").then((r) => setPkgs(r.data.packages || []));
-    // Handle success/cancel query params
-    const p = new URLSearchParams(window.location.search);
-    if (p.get("cancel") === "1") toast.error("Checkout cancelled");
   }, []);
+
+  const pkg = pkgs.find((p) => p.id === "elite_pro_lifetime");
 
   const buy = async (pkg_id) => {
     if (!user) {
@@ -25,13 +41,55 @@ export default function Pricing() {
       nav("/auth?mode=login");
       return;
     }
+
+    const scriptReady = await loadRazorpayScript();
+    if (!scriptReady) {
+      toast.error("Couldn't load the payment widget — check your connection and try again");
+      return;
+    }
+
     setLoading(true);
     try {
-      const r = await api.post("/payments/checkout", {
-        package_id: pkg_id,
-        origin_url: window.location.origin,
+      const r = await api.post("/payments/order", { package_id: pkg_id });
+      const order = r.data;
+
+      const rzp = new window.Razorpay({
+        key: order.key_id,
+        amount: order.amount,
+        currency: order.currency,
+        name: order.name,
+        description: order.description,
+        order_id: order.order_id,
+        theme: { color: "#e8ff00" },
+        handler: async (response) => {
+          try {
+            await api.post("/payments/verify", {
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+            });
+            toast.success("You're Elite Pro now 🎉");
+            // Full reload so the auth context re-fetches the user with is_pro: true
+            window.location.href = "/categories";
+          } catch (e) {
+            toast.error("Payment verification failed — contact support if you were charged");
+            setLoading(false);
+          }
+        },
+        modal: {
+          ondismiss: () => {
+            setLoading(false);
+            toast.error("Checkout cancelled");
+          },
+        },
       });
-      window.location.href = r.data.checkout_url;
+
+      rzp.on("payment.failed", () => {
+        toast.error("Payment failed — please try again");
+        setLoading(false);
+      });
+
+      rzp.open();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Checkout failed");
       setLoading(false);
@@ -39,6 +97,7 @@ export default function Pricing() {
   };
 
   const isPro = user?.is_pro;
+  const price = formatPrice(pkg);
 
   return (
     <div className="min-h-screen">
@@ -82,7 +141,7 @@ export default function Pricing() {
               <div className="text-[10px] uppercase tracking-[0.3em] text-neon-yellow font-bold">Elite Pro · Lifetime</div>
             </div>
             <div className="mt-3 flex items-baseline gap-2">
-              <span className="font-display font-black text-5xl tracking-tighter text-neon-yellow">$9.99</span>
+              <span className="font-display font-black text-5xl tracking-tighter text-neon-yellow">{price || "—"}</span>
               <span className="text-xs text-zinc-500 uppercase tracking-widest">once · forever</span>
             </div>
             <ul className="mt-6 space-y-3 text-sm">
@@ -109,7 +168,7 @@ export default function Pricing() {
                 </button>
               )}
               <div className="mt-3 text-[10px] uppercase tracking-widest text-zinc-500 text-center">
-                Secure checkout via Stripe · card 4242 4242 4242 4242 for test
+                Secure checkout via Razorpay · UPI, cards, netbanking &amp; wallets
               </div>
             </div>
           </div>
@@ -124,7 +183,7 @@ export default function Pricing() {
             <FaqItem q="Is this a subscription?">No — it's a one-time payment. Pay once, unlocked forever.</FaqItem>
             <FaqItem q="How do refunds work?">Contact us within 7 days for a full refund, no questions asked.</FaqItem>
             <FaqItem q="Which AI powers the quizzes?">Google's Gemini 2.5 Flash generates fresh questions for any topic.</FaqItem>
-            <FaqItem q="Is this a real Stripe payment?">Yes — via Stripe test mode. Use card <code>4242 4242 4242 4242</code>, any future expiry, any CVC.</FaqItem>
+            <FaqItem q="What payment methods are supported?">UPI, credit/debit cards, netbanking, and wallets — all handled securely through Razorpay.</FaqItem>
           </div>
         </div>
       </div>
