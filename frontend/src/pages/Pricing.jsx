@@ -26,6 +26,8 @@ function formatPrice(pkg) {
 export default function Pricing() {
   const [pkgs, setPkgs] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [qr, setQr] = useState(null); // { qr_code_id, image_url, amount, currency, expires_at }
+  const [qrLoading, setQrLoading] = useState(false);
   const { user } = useAuth();
   const nav = useNavigate();
 
@@ -33,7 +35,42 @@ export default function Pricing() {
     api.get("/payments/packages").then((r) => setPkgs(r.data.packages || []));
   }, []);
 
+  // Poll QR payment status every 3s while a QR is on screen
+  useEffect(() => {
+    if (!qr) return;
+    const interval = setInterval(async () => {
+      try {
+        const r = await api.get(`/payments/qr-status/${qr.qr_code_id}`);
+        if (r.data.payment_status === "paid") {
+          clearInterval(interval);
+          toast.success("Payment received — you're Elite Pro now 🎉");
+          window.location.href = "/categories";
+        }
+      } catch (e) {
+        // ignore transient poll errors
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [qr]);
+
   const pkg = pkgs.find((p) => p.id === "elite_pro_lifetime");
+
+  const showQr = async (pkg_id) => {
+    if (!user) {
+      toast.error("Log in first so we can attach Pro to your account");
+      nav("/auth?mode=login");
+      return;
+    }
+    setQrLoading(true);
+    try {
+      const r = await api.post("/payments/qr", { package_id: pkg_id });
+      setQr(r.data);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Couldn't generate QR code");
+    } finally {
+      setQrLoading(false);
+    }
+  };
 
   const buy = async (pkg_id) => {
     if (!user) {
@@ -156,16 +193,42 @@ export default function Pricing() {
                 <div data-testid="already-pro" className="w-full text-center py-3 rounded-sm bg-neon-green/10 text-neon-green uppercase tracking-widest text-xs font-display font-bold border border-neon-green/30">
                   ✓ You're already Elite Pro
                 </div>
+              ) : qr ? (
+                <div className="border border-zinc-700 rounded-sm p-4 text-center bg-black/40">
+                  <img src={qr.image_url} alt="Scan to pay with UPI" className="mx-auto w-48 h-48 bg-white p-2 rounded-sm" />
+                  <div className="mt-3 text-sm text-zinc-300">
+                    Scan with any UPI app to pay {qr.currency === "INR" ? "₹" : ""}{qr.amount}
+                  </div>
+                  <div className="mt-1 text-[10px] uppercase tracking-widest text-zinc-500 animate-pulse">
+                    Waiting for payment…
+                  </div>
+                  <button
+                    onClick={() => setQr(null)}
+                    className="mt-3 text-[10px] uppercase tracking-widest text-zinc-500 underline"
+                  >
+                    Cancel
+                  </button>
+                </div>
               ) : (
-                <button
-                  data-testid="buy-pro-btn"
-                  disabled={loading}
-                  onClick={() => buy("elite_pro_lifetime")}
-                  className="btn-primary w-full py-3 rounded-sm uppercase tracking-widest text-sm font-display flex items-center justify-center gap-2 disabled:opacity-60"
-                >
-                  <Lightning weight="fill" size={16} />
-                  {loading ? "Opening Checkout…" : "Get Elite Pro"}
-                </button>
+                <>
+                  <button
+                    data-testid="buy-pro-btn"
+                    disabled={loading}
+                    onClick={() => buy("elite_pro_lifetime")}
+                    className="btn-primary w-full py-3 rounded-sm uppercase tracking-widest text-sm font-display flex items-center justify-center gap-2 disabled:opacity-60"
+                  >
+                    <Lightning weight="fill" size={16} />
+                    {loading ? "Opening Checkout…" : "Get Elite Pro"}
+                  </button>
+                  <button
+                    data-testid="pay-via-qr-btn"
+                    disabled={qrLoading}
+                    onClick={() => showQr("elite_pro_lifetime")}
+                    className="btn-ghost w-full py-3 mt-3 rounded-sm uppercase tracking-widest text-xs font-display disabled:opacity-60"
+                  >
+                    {qrLoading ? "Generating QR…" : "Pay via UPI QR"}
+                  </button>
+                </>
               )}
               <div className="mt-3 text-[10px] uppercase tracking-widest text-zinc-500 text-center">
                 Secure checkout via Razorpay · UPI, cards, netbanking &amp; wallets
