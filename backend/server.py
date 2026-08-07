@@ -677,6 +677,76 @@ async def payment_status(order_id: str):
     }
 
 
+@api.post("/payments/qr")
+async def create_qr(data: CheckoutIn, authorization: Optional[str] = Header(default=None)):
+    """Creates a standalone UPI QR code the user can scan directly with any
+    UPI app (PhonePe, GPay, Paytm, etc.) — no popup, no redirect."""
+    pkg = PACKAGES.get(data.package_id)
+    if not pkg:
+        raise HTTPException(status_code=400, detail="Unknown package")
+
+    user_id = None
+    if authorization and authorization.lower().startswith("bearer "):
+        try:
+            payload = jwt.decode(authorization.split(" ", 1)[1], JWT_SECRET, algorithms=[JWT_ALG])
+            user_id = payload.get("sub")
+        except Exception:
+            user_id = None
+
+    amount_paise = int(round(pkg["amount"] * 100))
+    close_by = int((datetime.now(timezone.utc) + timedelta(minutes=30)).timestamp())
+
+    try:
+        qr = razorpay_client.qr_code.create({
+            "type": "upi_qr",
+            "name": "EliteQuiz",
+            "usage": "single_use",
+            "fixed_amount": True,
+            "payment_amount": amount_paise,
+            "description": pkg["name"],
+            "close_by": close_by,
+            "notes": {"user_id": user_id or "", "package_id": data.package_id},
+        })
+    except Exception as e:
+        logger.exception(e)
+        raise HTTPException(status_code=502, detail=f"Razorpay QR error: {str(e)}")
+
+    await db.payment_transactions.insert_one({
+        "qr_code_id": qr["id"],
+        "user_id": user_id,
+        "package_id": data.package_id,
+        "amount": pkg["amount"],
+        "currency": pkg["currency"],
+        "status": "initiated",
+        "payment_status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+    return {
+        "qr_code_id": qr["id"],
+        "image_url": qr["image_url"],
+        "amount": pkg["amount"],
+        "currency": pkg["currency"],
+        "expires_at": close_by,
+    }
+
+
+@api.get("/payments/qr-status/{qr_code_id}")
+async def qr_status(qr_code_id: str):
+    """Frontend polls this every few seconds while the QR is on screen,
+    since there's no popup callback to tell us the user paid."""
+    txn = await db.payment_transactions.find_one({"qr_code_id": qr_code_id}, {"_id": 0})
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    return {
+        "qr_code_id": qr_code_id,
+        "status": txn["status"],
+        "payment_status": txn["payment_status"],
+    }
+
+
 @api.post("/webhook/razorpay")
 async def razorpay_webhook(request: Request):
     """Safety net in case the client never calls /payments/verify (tab closed,
@@ -693,15 +763,23 @@ async def razorpay_webhook(request: Request):
     evt = json.loads(body)
     event_type = evt.get("event")
 
-    order_id = None
+    match_filter = None
     if event_type == "payment.captured":
         order_id = evt.get("payload", {}).get("payment", {}).get("entity", {}).get("order_id")
+        if order_id:
+            match_filter = {"order_id": order_id}
     elif event_type == "order.paid":
         order_id = evt.get("payload", {}).get("order", {}).get("entity", {}).get("id")
+        if order_id:
+            match_filter = {"order_id": order_id}
+    elif event_type == "qr_code.credited":
+        qr_code_id = evt.get("payload", {}).get("qr_code", {}).get("entity", {}).get("id")
+        if qr_code_id:
+            match_filter = {"qr_code_id": qr_code_id}
 
-    if order_id:
+    if match_filter:
         res = await db.payment_transactions.update_one(
-            {"order_id": order_id, "payment_status": {"$ne": "paid"}},
+            {**match_filter, "payment_status": {"$ne": "paid"}},
             {"$set": {
                 "status": "completed",
                 "payment_status": "paid",
@@ -709,7 +787,7 @@ async def razorpay_webhook(request: Request):
             }},
         )
         if res.modified_count:
-            txn = await db.payment_transactions.find_one({"order_id": order_id}, {"_id": 0})
+            txn = await db.payment_transactions.find_one(match_filter, {"_id": 0})
             if txn:
                 await _apply_paid_side_effects(txn)
 
