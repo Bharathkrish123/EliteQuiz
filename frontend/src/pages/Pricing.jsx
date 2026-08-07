@@ -118,7 +118,7 @@ export default function Pricing() {
           {/* Free tier */}
           <div className="card-surface rounded-sm p-8">
             <div className="text-[10px] uppercase tracking-[0.3em] text-zinc-500 font-bold">Free</div>
-            <div className="mt-3 font-display font-black text-4xl tracking-tighter">$0</div>
+            <div className="mt-3 font-display font-black text-4xl tracking-tighter">₹0</div>
             <div className="text-xs text-zinc-500 uppercase tracking-widest mt-1">forever</div>
             <ul className="mt-6 space-y-3 text-sm">
               <Line>All 8 curated categories</Line>
