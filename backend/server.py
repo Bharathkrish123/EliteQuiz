@@ -697,7 +697,7 @@ async def create_qr(data: CheckoutIn, authorization: Optional[str] = Header(defa
     close_by = int((datetime.now(timezone.utc) + timedelta(minutes=30)).timestamp())
 
     try:
-        qr = razorpay_client.qr_code.create({
+        qr = razorpay_client.qrcode.create({
             "type": "upi_qr",
             "name": "EliteQuiz",
             "usage": "single_use",
